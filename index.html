@@ -375,6 +375,7 @@
                         console.log('✅ Tracker ready:', data.tracker);
                     } else if (data.type === 'frame') {
                         // Server sent back tracked frame
+                        waitingForResponse = false;
                         const img = new Image();
                         img.src = data.frame_data;
                         img.onload = () => {
@@ -387,9 +388,11 @@
                         console.error('Server error:', data.error);
                         status.textContent = `❌ Server error: ${data.error}`;
                         status.className = 'status error';
+                        waitingForResponse = false;
                     }
                 } catch (e) {
                     console.error('Failed to parse message:', e);
+                    waitingForResponse = false;
                 }
             };
             
@@ -419,12 +422,29 @@
             }
             
             try {
+                // Skip frame if we're still waiting for response from server
+                if (waitingForResponse) {
+                    frameSkipCounter++;
+                    setTimeout(sendFrames, 10);
+                    return;
+                }
+                
+                // Rate limit: only send frames every FRAME_INTERVAL ms
+                const now = Date.now();
+                if (now - lastFrameTime < FRAME_INTERVAL) {
+                    setTimeout(sendFrames, Math.max(1, FRAME_INTERVAL - (now - lastFrameTime)));
+                    return;
+                }
+                
+                lastFrameTime = now;
+                
                 // Capture frame from video
                 ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
                 
-                // Convert to JPEG blob and read as binary
+                // Convert to JPEG blob and send
                 canvas.toBlob((blob) => {
-                    if (ws && ws.readyState === WebSocket.OPEN) {
+                    if (ws && ws.readyState === WebSocket.OPEN && !waitingForResponse) {
+                        waitingForResponse = true;
                         const reader = new FileReader();
                         reader.onload = () => {
                             try {
@@ -432,17 +452,19 @@
                                 ws.send(new Uint8Array(reader.result));
                             } catch (e) {
                                 console.error('Error sending frame:', e);
+                                waitingForResponse = false;
                             }
                         };
                         reader.readAsArrayBuffer(blob);
                     }
-                }, 'image/jpeg', 0.8);
+                }, 'image/jpeg', 0.75); // Lower quality for faster processing
+                
             } catch (e) {
                 console.error('Error in sendFrames:', e);
             }
             
-            // Send at ~30 FPS
-            setTimeout(sendFrames, 33);
+            // Schedule next frame
+            setTimeout(sendFrames, 10);
         }
 
         function stopTracking() {
