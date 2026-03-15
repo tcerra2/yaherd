@@ -24,12 +24,11 @@ RUN pip install --no-cache-dir -r requirements-web.txt
 # Copy project files
 COPY . .
 
-# Expose port
+# Expose port (informational - actual port from PORT env var)
 EXPOSE 8000
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
-ENV PORT=8000
 
 # Run the application
 CMD ["python", "main.py"]
