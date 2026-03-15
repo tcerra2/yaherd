@@ -153,15 +153,12 @@ def process_frame_with_tracking(frame, tracker, yolo, config: TrackingConfig, fr
         confs = result.boxes.conf.cpu().numpy()
         classes = result.boxes.cls.cpu().numpy().astype(int)
         
-        if frame_num % 30 == 0 or frame_num <= 3:
+        if frame_num % 100 == 0:
             print(f"[YOLO] Frame {frame_num}: Detected {len(dets)} objects")
-            if len(dets) > 0:
-                print(f"[YOLO] Frame {frame_num}: Confidence scores: {confs}")
     
     except Exception as e:
-        print(f"[PROCESS] Frame {frame_num}: ERROR in YOLO inference: {e}")
-        import traceback
-        traceback.print_exc()
+        if frame_num % 50 == 0:
+            print(f"[PROCESS] Frame {frame_num}: ERROR in YOLO inference: {e}")
         return frame, []
     
     # Filter by class if specified
@@ -174,18 +171,22 @@ def process_frame_with_tracking(frame, tracker, yolo, config: TrackingConfig, fr
     # Update tracker
     try:
         if len(dets) > 0:
-            dets_confs = np.concatenate([dets, confs.reshape(-1, 1)], axis=1)
+            # Format: [x1, y1, x2, y2, confidence, class_id]
+            dets_confs = np.concatenate([
+                dets,
+                confs.reshape(-1, 1),
+                classes.reshape(-1, 1)
+            ], axis=1)
             tracks = tracker.update(dets_confs, frame)
         else:
             tracks = np.array([])
         
-        if frame_num % 30 == 0 or frame_num <= 3:
+        if frame_num % 100 == 0:
             print(f"[TRACKER] Frame {frame_num}: Tracking {len(tracks)} objects")
     
     except Exception as e:
-        print(f"[PROCESS] Frame {frame_num}: ERROR in tracker update: {e}")
-        import traceback
-        traceback.print_exc()
+        if frame_num % 50 == 0:
+            print(f"[PROCESS] Frame {frame_num}: ERROR in tracker update: {e}")
         tracks = np.array([])
     
     # Draw results
@@ -200,14 +201,10 @@ def process_frame_with_tracking(frame, tracker, yolo, config: TrackingConfig, fr
                 label = f"ID: {int(track_id)}"
                 cv2.putText(annotated_frame, label, (x1, y1 - 10),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-        
-        if frame_num <= 3:
-            print(f"[DRAW] Frame {frame_num}: Drew {len(tracks)} bounding boxes")
     
     except Exception as e:
-        print(f"[PROCESS] Frame {frame_num}: ERROR drawing boxes: {e}")
-        import traceback
-        traceback.print_exc()
+        if frame_num % 50 == 0:
+            print(f"[PROCESS] Frame {frame_num}: ERROR drawing boxes: {e}")
         annotated_frame = frame.copy()
     
     # Prepare response data
@@ -528,7 +525,7 @@ async def websocket_track(websocket: WebSocket):
                 frame_data = await websocket.receive_bytes()
                 frame_count += 1
                 
-                if frame_count % 10 == 0 or frame_count <= 3:  # Log first 3 and every 10th
+                if frame_count % 100 == 0:
                     print(f"[WS] Frame {frame_count}: Received {len(frame_data)} bytes from {client_addr}")
                 
                 # Decode frame from JPEG
@@ -538,24 +535,16 @@ async def websocket_track(websocket: WebSocket):
                     print(f"[WS] Frame {frame_count}: ERROR - Failed to decode JPEG")
                     continue
                 
-                if frame_count <= 3 or frame_count % 10 == 0:
-                    print(f"[WS] Frame {frame_count}: Decoded shape={frame.shape}, dtype={frame.dtype}")
-                
                 # Process frame with tracking
                 annotated_frame, tracks_data = process_frame_with_tracking(frame, tracker, yolo, config, frame_count)
                 frame_num += 1
                 
-                if frame_count <= 3 or frame_count % 10 == 0:
-                    print(f"[WS] Frame {frame_count}: Processing complete, {len(tracks_data)} objects tracked")
-                
                 # Encode result as JPEG
                 ret, buffer = cv2.imencode('.jpg', annotated_frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
                 if not ret:
-                    print(f"[WS] Frame {frame_count}: ERROR - Failed to encode result")
+                    if frame_count % 100 == 0:
+                        print(f"[WS] Frame {frame_count}: ERROR - Failed to encode result")
                     continue
-                
-                if frame_count <= 3 or frame_count % 10 == 0:
-                    print(f"[WS] Frame {frame_count}: Encoded to {len(buffer)} bytes")
                 
                 # Convert to base64 for JSON transport
                 frame_base64 = base64.b64encode(buffer).decode()
@@ -568,8 +557,8 @@ async def websocket_track(websocket: WebSocket):
                     "object_count": len(tracks_data)
                 })
                 
-                if frame_count <= 3 or frame_count % 10 == 0:
-                    print(f"[WS] Frame {frame_count}: Sent back to client ✓")
+                if frame_count % 100 == 0:
+                    print(f"[WS] Frame {frame_count}: Sent {len(tracks_data)} tracked objects ✓")
                 
             except WebSocketDisconnect:
                 print(f"[WS] Client {client_addr} disconnected after {frame_count} frames")
