@@ -300,6 +300,7 @@
         let outOfOrderFrames = 0;
         let lastResponseTime = 0;
         let frameSendTimes = {}; // Track send time for each frame
+        let configReady = false; // CRITICAL: Wait for server config before sending frames
 
         // Update confidence display
         confSlider.addEventListener('input', (e) => {
@@ -358,6 +359,7 @@
             ws.onopen = () => {
                 console.log('✅ WebSocket connected!');
                 status.textContent = '📤 Sending configuration...';
+                configReady = false; // Reset flag
                 
                 // Send config
                 const config = {
@@ -367,9 +369,6 @@
                 };
                 console.log('Sending config:', config);
                 ws.send(JSON.stringify(config));
-                
-                status.textContent = '✅ Connected! Starting to stream frames...';
-                status.className = 'status success';
             };
             
             ws.onmessage = (event) => {
@@ -435,12 +434,17 @@
                     const data = JSON.parse(event.data);
                     if (data.status === 'ready') {
                         console.log('✅ Tracker ready:', data.tracker);
+                        configReady = true;
                         status.textContent = '✅ Connected! Streaming frames...';
                         status.className = 'status success';
+                        if (isStreaming) {
+                            sendFrames();
+                        }
                     } else if (data.error) {
                         console.error('Server error:', data.error);
                         status.textContent = `❌ Server error: ${data.error}`;
                         status.className = 'status error';
+                        configReady = false;
                         sendingFrame = false;
                     }
                 } catch (e) {
@@ -464,7 +468,7 @@
         }
 
         function sendFrames() {
-            if (!isStreaming || sendingFrame) {
+            if (!isStreaming || !configReady || sendingFrame) {
                 if (isStreaming && !sendingFrame) {
                     setTimeout(sendFrames, frameInterval);
                 }
