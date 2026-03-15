@@ -476,9 +476,8 @@ async def download_file(filename: str):
 if __name__ == "__main__":
     import os
     port = int(os.environ.get("PORT", 8000))
-    print(f"DEBUG: PORT environment variable = {os.environ.get('PORT')}")
-    print(f"DEBUG: Using port = {port}")
-    print(f"DEBUG: All environment variables: {dict(os.environ)}")
+    print(f"INFO: PORT environment variable = '{os.environ.get('PORT', 'NOT SET')}'")
+    print(f"INFO: Binding to port = {port}")
     uvicorn.run(
         app,
         host="0.0.0.0",
