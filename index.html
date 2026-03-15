@@ -291,6 +291,10 @@
         let frameCount = 0;
         let objectCount = 0;
         let animationId = null;
+        let waitingForResponse = false;
+        let lastFrameTime = 0;
+        let frameSkipCounter = 0;
+        const FRAME_INTERVAL = 50; // ~20 FPS to reduce load
 
         // Update confidence display
         confSlider.addEventListener('input', (e) => {
