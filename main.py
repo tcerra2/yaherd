@@ -6,6 +6,8 @@ Live video display with object tracking - accessible from any device
 import io
 import os
 import cv2
+import json
+import base64
 import torch
 import numpy as np
 import tempfile
@@ -197,11 +199,13 @@ async def root():
         "version": "2.0.0",
         "features": ["Real-time live streaming", "File upload", "Live tracking"],
         "how_to_use": {
-            "step_1": "Upload video: POST /track/upload",
-            "step_2": "Get stream_url from response",
-            "step_3": "Open stream_url in browser to watch LIVE tracking from any device"
+            "step_1": "Open web UI at: /camera",
+            "step_2": "Allow camera access from your device",
+            "step_3": "Click 'Start Tracking' to begin live tracking",
+            "step_4": "See real-time tracked video instantly"
         },
         "endpoints": {
+            "web_ui": "/camera",
             "health": "/health",
             "stream": "/stream?file=video.mp4&tracking_method=bytetrack",
             "upload": "POST /track/upload",
@@ -209,6 +213,13 @@ async def root():
             "stop_stream": "POST /stop-stream"
         }
     }
+
+
+@app.get("/camera")
+async def camera_page():
+    """Serve the camera tracking web interface"""
+    with open("index.html", "r") as f:
+        return FileResponse("index.html", media_type="text/html")
 
 
 @app.get("/health")
@@ -357,6 +368,100 @@ async def stop_stream():
     global stream_active
     stream_active = False
     return {"status": "stream stopped"}
+
+
+@app.websocket("/ws/track")
+async def websocket_track(websocket: WebSocket):
+    """WebSocket endpoint for real-time camera tracking from client devices"""
+    await websocket.accept()
+    
+    tracker = None
+    yolo = None
+    frame_num = 0
+    config = None
+    
+    try:
+        # Wait for initial config
+        while True:
+            data = await websocket.receive_text()
+            try:
+                msg = json.loads(data)
+                if msg.get("type") == "config":
+                    tracking_method = msg.get("tracking_method", "bytetrack")
+                    confidence = msg.get("confidence", 0.5)
+                    
+                    if tracking_method not in ALLOWED_TRACKERS:
+                        await websocket.send_json({"error": f"Invalid tracker: {tracking_method}"})
+                        continue
+                    
+                    # Initialize tracker and model
+                    yolo = load_yolo_model()
+                    tracker = create_tracker_instance(tracking_method)
+                    config = TrackingConfig(
+                        tracking_method=tracking_method,
+                        confidence=confidence
+                    )
+                    
+                    await websocket.send_json({
+                        "status": "ready",
+                        "tracker": tracking_method,
+                        "message": "Ready to receive frames"
+                    })
+                    break
+            except json.JSONDecodeError:
+                continue
+        
+        # Process incoming frames
+        while True:
+            try:
+                # Receive frame data (binary)
+                frame_data = await websocket.receive_bytes()
+                
+                # Decode frame from JPEG
+                frame = cv2.imdecode(np.frombuffer(frame_data, np.uint8), cv2.IMREAD_COLOR)
+                
+                if frame is None:
+                    continue
+                
+                # Process frame with tracking
+                annotated_frame, tracks_data = process_frame_with_tracking(frame, tracker, yolo, config)
+                frame_num += 1
+                
+                # Encode result as JPEG
+                ret, buffer = cv2.imencode('.jpg', annotated_frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                if not ret:
+                    continue
+                
+                # Convert to base64 for JSON transport
+                frame_base64 = base64.b64encode(buffer).decode()
+                
+                # Send back to client
+                await websocket.send_json({
+                    "type": "frame",
+                    "frame_data": f"data:image/jpeg;base64,{frame_base64}",
+                    "frame_num": frame_num,
+                    "object_count": len(tracks_data)
+                })
+                
+            except WebSocketDisconnect:
+                print("Client disconnected")
+                break
+            except Exception as e:
+                print(f"Frame processing error: {e}")
+                await websocket.send_json({"error": str(e)})
+                break
+    
+    except Exception as e:
+        print(f"WebSocket error: {e}")
+        try:
+            await websocket.send_json({"error": str(e)})
+        except:
+            pass
+    finally:
+        try:
+            await websocket.close()
+        except:
+            pass
 
 
 @app.get("/download/{filename}")
