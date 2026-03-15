@@ -9,6 +9,7 @@ import cv2
 import json
 import base64
 import torch
+import time
 import numpy as np
 import tempfile
 import threading
@@ -505,6 +506,7 @@ async def websocket_track(websocket: WebSocket):
                     print(f"[WS] Tracker ready! Sending confirmation to {client_addr}")
                     await websocket.send_json({
                         "status": "ready",
+                        "type": "config_response",
                         "tracker": tracking_method,
                         "message": "Ready to receive frames"
                     })
@@ -521,7 +523,6 @@ async def websocket_track(websocket: WebSocket):
         frame_count = 0
         expected_seq_num = 0
         dropped_frames = 0
-        import time
         last_sent_time = time.time()
         processing_times = []
         
@@ -557,7 +558,7 @@ async def websocket_track(websocket: WebSocket):
                 if frame is None:
                     continue
                 
-                # Process frame with tracking
+                # Process frame with tracking - THIS DRAWS THE BOXES
                 process_start = time.time()
                 annotated_frame, tracks_data = process_frame_with_tracking(frame, tracker, yolo, config, frame_count)
                 process_time = time.time() - process_start
@@ -589,7 +590,7 @@ async def websocket_track(websocket: WebSocket):
                 
                 if frame_count % 50 == 0:
                     avg_process = sum(processing_times) / len(processing_times)
-                    print(f"[WS] Frame {seq_num}: Total={total_time:.0f}ms (decode={decode_time:.0f}ms, process={avg_process*1000:.0f}ms, encode={encode_time:.0f}ms, send={send_time:.0f}ms) | Objects: {len(tracks_data)} | Dropped: {dropped_frames}")
+                    print(f"[WS] Frame {seq_num}: Total={total_time*1000:.0f}ms (decode={decode_time*1000:.0f}ms, process={avg_process*1000:.0f}ms, encode={encode_time*1000:.0f}ms, send={send_time*1000:.0f}ms) | Objects: {len(tracks_data)} | Dropped: {dropped_frames}")
                 
             except WebSocketDisconnect:
                 print(f"[WS] Client {client_addr} disconnected after {frame_count} frames (dropped: {dropped_frames})")
