@@ -471,3 +471,14 @@ async def download_file(filename: str):
     if not file_path.exists():
         return JSONResponse(status_code=404, content={"error": "File not found"})
     return FileResponse(file_path)
+
+
+if __name__ == "__main__":
+    import os
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=port,
+        log_level="info"
+    )
