@@ -1,6 +1,6 @@
 """
-YOLO Tracking Web Service - FastAPI Application
-Supports both file uploads and real-time streaming
+YOLO Tracking Web Service with Real-time Streaming
+Live video display with object tracking - accessible from any device
 """
 
 import io
@@ -9,6 +9,8 @@ import cv2
 import torch
 import numpy as np
 import tempfile
+import threading
+import queue
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
@@ -33,8 +35,8 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 # Initialize FastAPI
 app = FastAPI(
     title="YOLO Tracking Web Service",
-    description="Real-time object detection and tracking API",
-    version="1.0.0"
+    description="Real-time object detection and tracking API with live streaming",
+    version="2.0.0"
 )
 
 # Add CORS middleware
@@ -46,9 +48,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global variables for model caching
+# Global variables
 yolo_model = None
 device = "cuda" if torch.cuda.is_available() else "cpu"
+stream_queue = queue.Queue(maxsize=1)
+stream_active = False
+current_tracker = None
 
 
 class TrackingConfig(BaseModel):
@@ -87,7 +92,7 @@ def create_tracker_instance(tracking_method: str, reid_model: Optional[str] = No
     return tracker
 
 
-def process_frame(frame, tracker, yolo, config: TrackingConfig):
+def process_frame_with_tracking(frame, tracker, yolo, config: TrackingConfig):
     """Process a single frame for tracking"""
     results = yolo(frame, conf=config.confidence, iou=config.iou_threshold, verbose=False)
     result = results[0]
@@ -134,19 +139,74 @@ def process_frame(frame, tracker, yolo, config: TrackingConfig):
     return annotated_frame, tracks_data
 
 
+def video_stream_generator(video_path: str, tracking_method: str = "bytetrack", config_params: dict = None):
+    """Generate MJPEG stream from video file - like cv2.imshow() but over web"""
+    global stream_active, current_tracker
+    
+    config_params = config_params or {}
+    config = TrackingConfig(tracking_method=tracking_method, **config_params)
+    
+    try:
+        yolo = load_yolo_model()
+        tracker = create_tracker_instance(tracking_method)
+        current_tracker = tracker
+        
+        cap = cv2.VideoCapture(video_path)
+        stream_active = True
+        
+        while stream_active and cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
+            
+            # Resize for faster processing
+            frame = cv2.resize(frame, (640, 480))
+            
+            # Process frame
+            annotated_frame, _ = process_frame_with_tracking(frame, tracker, yolo, config)
+            
+            # Encode frame as JPEG
+            ret, buffer = cv2.imencode('.jpg', annotated_frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+            if not ret:
+                continue
+            
+            frame_bytes = buffer.tobytes()
+            
+            # Yield MJPEG boundary and frame
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n'
+                   b'Content-Length: ' + f'{len(frame_bytes)}'.encode() + b'\r\n\r\n'
+                   + frame_bytes + b'\r\n')
+        
+        cap.release()
+        stream_active = False
+    
+    except Exception as e:
+        print(f"Stream error: {e}")
+        stream_active = False
+
+
 # Routes
 
 @app.get("/")
 async def root():
-    """Root endpoint - API info"""
+    """Root endpoint with streaming instructions"""
+    hostname = os.getenv("RAILWAY_PUBLIC_DOMAIN", "localhost:8000")
     return {
-        "service": "YOLO Tracking Web Service",
-        "version": "1.0.0",
+        "service": "YOLO Tracking Web Service v2",
+        "version": "2.0.0",
+        "features": ["Real-time live streaming", "File upload", "Live tracking"],
+        "how_to_use": {
+            "step_1": "Upload video: POST /track/upload",
+            "step_2": "Get stream_url from response",
+            "step_3": "Open stream_url in browser to watch LIVE tracking from any device"
+        },
         "endpoints": {
             "health": "/health",
+            "stream": "/stream?file=video.mp4&tracking_method=bytetrack",
             "upload": "POST /track/upload",
-            "stream": "WS /track/stream",
-            "trackers": "GET /trackers"
+            "trackers": "GET /trackers",
+            "stop_stream": "POST /stop-stream"
         }
     }
 
@@ -154,7 +214,7 @@ async def root():
 @app.get("/health")
 async def health():
     """Health check endpoint"""
-    return {"status": "healthy", "device": device}
+    return {"status": "healthy", "device": device, "streaming": stream_active}
 
 
 @app.get("/trackers")
@@ -166,6 +226,38 @@ async def get_trackers():
     }
 
 
+@app.get("/stream")
+async def stream_video(
+    file: str = Query(..., description="Filename of uploaded video"),
+    tracking_method: str = Query("bytetrack"),
+    confidence: float = Query(0.5),
+    iou_threshold: float = Query(0.7)
+):
+    """Stream video with real-time tracking (MJPEG format) - Like cv2.imshow() but accessible from any device over web"""
+    
+    if tracking_method not in ALLOWED_TRACKERS:
+        return JSONResponse(
+            status_code=400,
+            content={"error": f"Invalid tracker. Allowed: {ALLOWED_TRACKERS}"}
+        )
+    
+    # Check if file exists
+    video_path = UPLOAD_DIR / file
+    
+    if not video_path.exists():
+        return JSONResponse(status_code=404, content={"error": f"Video file not found: {file}"})
+    
+    config_params = {
+        "confidence": confidence,
+        "iou_threshold": iou_threshold
+    }
+    
+    return StreamingResponse(
+        video_stream_generator(str(video_path), tracking_method, config_params),
+        media_type="multipart/x-mixed-replace; boundary=frame"
+    )
+
+
 @app.post("/track/upload")
 async def upload_video(
     file: UploadFile = File(...),
@@ -173,7 +265,7 @@ async def upload_video(
     confidence: float = Query(0.5),
     iou_threshold: float = Query(0.7)
 ):
-    """Upload a video/image file for tracking"""
+    """Upload a video file and get real-time stream URL"""
     
     if tracking_method not in ALLOWED_TRACKERS:
         return JSONResponse(
@@ -188,9 +280,22 @@ async def upload_video(
         with open(file_path, "wb") as f:
             f.write(content)
         
-        # Load models
-        yolo = load_yolo_model()
-        tracker = create_tracker_instance(tracking_method)
+        hostname = os.getenv("RAILWAY_PUBLIC_DOMAIN", "localhost:8000")
+        
+        return {
+            "message": "Video uploaded! Now streaming...",
+            "filename": file.filename,
+            "stream_url": f"https://{hostname}/stream?file={file.filename}&tracking_method={tracking_method}&confidence={confidence}&iou_threshold={iou_threshold}",
+            "how_to_view": "Open stream_url in a browser or img element to watch live tracking",
+            "example_html": f'<img src="https://{hostname}/stream?file={file.filename}" width="640" height="480">',
+            "available_trackers": ALLOWED_TRACKERS
+        }
+    
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e)}
+        )
         
         config = TrackingConfig(
             tracking_method=tracking_method,
@@ -246,38 +351,12 @@ async def upload_video(
         )
 
 
-@app.websocket("/track/stream")
-async def websocket_stream(websocket: WebSocket):
-    """WebSocket endpoint for real-time streaming"""
-    await websocket.accept()
-    
-    try:
-        # Load models
-        yolo = load_yolo_model()
-        
-        while True:
-            # Receive frame data
-            data = await websocket.receive_json()
-            
-            if data.get("type") == "init":
-                # Initialize tracker
-                tracking_method = data.get("tracking_method", "bytetrack")
-                tracker = create_tracker_instance(tracking_method)
-                await websocket.send_json({"status": "initialized", "tracker": tracking_method})
-            
-            elif data.get("type") == "frame":
-                # Process frame
-                # In real implementation, receive frame bytes
-                await websocket.send_json({"status": "processing"})
-            
-            elif data.get("type") == "close":
-                break
-    
-    except WebSocketDisconnect:
-        print("Client disconnected")
-    except Exception as e:
-        await websocket.send_json({"error": str(e)})
-        await websocket.close()
+@app.post("/stop-stream")
+async def stop_stream():
+    """Stop current streaming"""
+    global stream_active
+    stream_active = False
+    return {"status": "stream stopped"}
 
 
 @app.get("/download/{filename}")
