@@ -94,7 +94,7 @@ def create_tracker_instance(tracking_method: str, reid_model: Optional[str] = No
     return tracker
 
 
-def process_frame_with_tracking(frame, tracker, yolo, config: TrackingConfig):
+def process_frame_with_tracking(frame, tracker, yolo, config: TrackingConfig, frame_num=0):
     """Process a single frame for tracking"""
     results = yolo(frame, conf=config.confidence, iou=config.iou_threshold, verbose=False)
     result = results[0]
@@ -103,6 +103,9 @@ def process_frame_with_tracking(frame, tracker, yolo, config: TrackingConfig):
     dets = result.boxes.xyxy.cpu().numpy()
     confs = result.boxes.conf.cpu().numpy()
     classes = result.boxes.cls.cpu().numpy().astype(int)
+    
+    if frame_num % 30 == 0:
+        print(f"[YOLO] Frame {frame_num}: Found {len(dets)} detections")
     
     # Filter by class if specified
     if config.class_filter:
@@ -117,6 +120,9 @@ def process_frame_with_tracking(frame, tracker, yolo, config: TrackingConfig):
         tracks = tracker.update(dets_confs, frame)
     else:
         tracks = np.array([])
+    
+    if frame_num % 30 == 0:
+        print(f"[TRACKER] Frame {frame_num}: Tracking {len(tracks)} objects")
     
     # Draw results
     annotated_frame = frame.copy()
@@ -419,25 +425,34 @@ async def websocket_track(websocket: WebSocket):
                 frame_data = await websocket.receive_bytes()
                 frame_count += 1
                 
-                if frame_count % 30 == 0:  # Log every 30 frames
-                    print(f"[WS] Received frame {frame_count} ({len(frame_data)} bytes) from {client_addr}")
+                if frame_count % 10 == 0 or frame_count <= 3:  # Log first 3 and every 10th
+                    print(f"[WS] Frame {frame_count}: Received {len(frame_data)} bytes from {client_addr}")
                 
                 # Decode frame from JPEG
                 frame = cv2.imdecode(np.frombuffer(frame_data, np.uint8), cv2.IMREAD_COLOR)
                 
                 if frame is None:
-                    print(f"[WS] Failed to decode frame from {client_addr}")
+                    print(f"[WS] Frame {frame_count}: ERROR - Failed to decode JPEG")
                     continue
                 
+                if frame_count <= 3 or frame_count % 10 == 0:
+                    print(f"[WS] Frame {frame_count}: Decoded shape={frame.shape}, dtype={frame.dtype}")
+                
                 # Process frame with tracking
-                annotated_frame, tracks_data = process_frame_with_tracking(frame, tracker, yolo, config)
+                annotated_frame, tracks_data = process_frame_with_tracking(frame, tracker, yolo, config, frame_count)
                 frame_num += 1
+                
+                if frame_count <= 3 or frame_count % 10 == 0:
+                    print(f"[WS] Frame {frame_count}: Processing complete, {len(tracks_data)} objects tracked")
                 
                 # Encode result as JPEG
                 ret, buffer = cv2.imencode('.jpg', annotated_frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
                 if not ret:
-                    print(f"[WS] Failed to encode result frame")
+                    print(f"[WS] Frame {frame_count}: ERROR - Failed to encode result")
                     continue
+                
+                if frame_count <= 3 or frame_count % 10 == 0:
+                    print(f"[WS] Frame {frame_count}: Encoded to {len(buffer)} bytes")
                 
                 # Convert to base64 for JSON transport
                 frame_base64 = base64.b64encode(buffer).decode()
@@ -450,11 +465,16 @@ async def websocket_track(websocket: WebSocket):
                     "object_count": len(tracks_data)
                 })
                 
+                if frame_count <= 3 or frame_count % 10 == 0:
+                    print(f"[WS] Frame {frame_count}: Sent back to client ✓")
+                
             except WebSocketDisconnect:
                 print(f"[WS] Client {client_addr} disconnected after {frame_count} frames")
                 break
             except Exception as e:
-                print(f"[WS] Frame processing error from {client_addr}: {e}")
+                print(f"[WS] Frame {frame_count}: ERROR - {e}")
+                import traceback
+                traceback.print_exc()
                 try:
                     await websocket.send_json({"error": str(e)})
                 except:
