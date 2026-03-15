@@ -56,6 +56,31 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 stream_queue = queue.Queue(maxsize=1)
 stream_active = False
 current_tracker = None
+model_loaded = False
+model_error = None
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Load model on startup"""
+    global model_loaded, model_error
+    print("\n" + "="*60)
+    print("🚀 YOLO TRACKING SERVICE STARTING...")
+    print("="*60)
+    print(f"[STARTUP] Device: {device}")
+    print(f"[STARTUP] Loading YOLO model on startup...")
+    
+    try:
+        load_yolo_model()
+        model_loaded = True
+        print(f"[STARTUP] ✅ YOLO model loaded successfully!")
+        print("="*60 + "\n")
+    except Exception as e:
+        model_error = str(e)
+        print(f"[STARTUP] ❌ FAILED TO LOAD YOLO MODEL: {e}")
+        import traceback
+        traceback.print_exc()
+        print("="*60 + "\n")
 
 
 class TrackingConfig(BaseModel):
@@ -264,7 +289,21 @@ async def camera_page():
 @app.get("/health")
 async def health():
     """Health check endpoint"""
-    return {"status": "healthy", "device": device, "streaming": stream_active}
+    health_status = {
+        "status": "healthy" if model_loaded else "degraded",
+        "device": device,
+        "model_loaded": model_loaded,
+        "streaming": stream_active
+    }
+    
+    if model_error:
+        health_status["model_error"] = model_error
+    
+    if not model_loaded:
+        health_status["status"] = "unhealthy"
+        health_status["message"] = f"YOLO model not loaded: {model_error or 'Unknown error'}"
+    
+    return health_status
 
 
 @app.get("/trackers")
@@ -413,10 +452,22 @@ async def stop_stream():
 async def websocket_track(websocket: WebSocket):
     """WebSocket endpoint for real-time camera tracking from client devices"""
     client_addr = websocket.client.host if websocket.client else "unknown"
-    print(f"[WS] New connection attempt from {client_addr}")
+    print(f"\n[WS] New connection attempt from {client_addr}")
     
     await websocket.accept()
     print(f"[WS] Connection accepted from {client_addr}")
+    
+    # Check if model is loaded
+    if not model_loaded:
+        print(f"[WS] ❌ ERROR: YOLO model not loaded! Error: {model_error}")
+        try:
+            await websocket.send_json({
+                "error": f"YOLO model not loaded. Server error: {model_error}"
+            })
+        except:
+            pass
+        await websocket.close()
+        return
     
     tracker = None
     yolo = None
