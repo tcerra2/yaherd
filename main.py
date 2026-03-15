@@ -18,7 +18,7 @@ from typing import Optional
 from datetime import datetime
 
 from fastapi import FastAPI, UploadFile, File, WebSocket, WebSocketDisconnect, Query
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
@@ -192,27 +192,8 @@ def video_stream_generator(video_path: str, tracking_method: str = "bytetrack", 
 
 @app.get("/")
 async def root():
-    """Root endpoint with streaming instructions"""
-    hostname = os.getenv("RAILWAY_PUBLIC_DOMAIN", "localhost:8000")
-    return {
-        "service": "YOLO Tracking Web Service v2",
-        "version": "2.0.0",
-        "features": ["Real-time live streaming", "File upload", "Live tracking"],
-        "how_to_use": {
-            "step_1": "Open web UI at: /camera",
-            "step_2": "Allow camera access from your device",
-            "step_3": "Click 'Start Tracking' to begin live tracking",
-            "step_4": "See real-time tracked video instantly"
-        },
-        "endpoints": {
-            "web_ui": "/camera",
-            "health": "/health",
-            "stream": "/stream?file=video.mp4&tracking_method=bytetrack",
-            "upload": "POST /track/upload",
-            "trackers": "GET /trackers",
-            "stop_stream": "POST /stop-stream"
-        }
-    }
+    """Root endpoint - redirect to camera interface"""
+    return RedirectResponse(url="/camera")
 
 
 @app.get("/camera")
@@ -476,8 +457,6 @@ async def download_file(filename: str):
 if __name__ == "__main__":
     import os
     port = int(os.environ.get("PORT", 8000))
-    print(f"INFO: PORT environment variable = '{os.environ.get('PORT', 'NOT SET')}'")
-    print(f"INFO: Binding to port = {port}")
     uvicorn.run(
         app,
         host="0.0.0.0",
