@@ -338,44 +338,65 @@
             // Get server URL from current page
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             const host = window.location.host;
+            const wsUrl = `${protocol}//${host}/ws/track`;
             
-            ws = new WebSocket(`${protocol}//${host}/ws/track`);
+            console.log(`📡 Attempting WebSocket connection to: ${wsUrl}`);
+            status.textContent = `📡 Connecting to WebSocket: ${wsUrl}`;
+            status.className = 'status info';
+            
+            ws = new WebSocket(wsUrl);
             
             ws.onopen = () => {
-                status.textContent = '✅ Connected to server. Streaming live...';
-                status.className = 'status success';
+                console.log('✅ WebSocket connected!');
+                status.textContent = '📤 Sending configuration...';
                 
                 // Send config
-                ws.send(JSON.stringify({
+                const config = {
                     type: 'config',
                     tracking_method: document.getElementById('trackerSelect').value,
                     confidence: parseFloat(confSlider.value)
-                }));
+                };
+                console.log('Sending config:', config);
+                ws.send(JSON.stringify(config));
+                
+                status.textContent = '✅ Connected! Starting to stream frames...';
+                status.className = 'status success';
             };
             
             ws.onmessage = (event) => {
-                const data = JSON.parse(event.data);
-                
-                if (data.type === 'frame') {
-                    // Server sent back tracked frame
-                    const img = new Image();
-                    img.src = data.frame_data;
-                    img.onload = () => {
-                        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-                        frameCountEl.textContent = data.frame_num;
-                        objectCountEl.textContent = data.object_count;
-                    };
-                    canvas.classList.remove('hidden');
+                try {
+                    const data = JSON.parse(event.data);
+                    
+                    if (data.status === 'ready') {
+                        console.log('✅ Tracker ready:', data.tracker);
+                    } else if (data.type === 'frame') {
+                        // Server sent back tracked frame
+                        const img = new Image();
+                        img.src = data.frame_data;
+                        img.onload = () => {
+                            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                            frameCountEl.textContent = data.frame_num;
+                            objectCountEl.textContent = data.object_count;
+                        };
+                        canvas.classList.remove('hidden');
+                    } else if (data.error) {
+                        console.error('Server error:', data.error);
+                        status.textContent = `❌ Server error: ${data.error}`;
+                        status.className = 'status error';
+                    }
+                } catch (e) {
+                    console.error('Failed to parse message:', e);
                 }
             };
             
             ws.onerror = (error) => {
-                status.textContent = `❌ WebSocket error: ${error}`;
+                console.error('❌ WebSocket error:', error);
+                status.textContent = `❌ WebSocket error: ${error.message || error}`;
                 status.className = 'status error';
-                console.error('WebSocket error:', error);
             };
             
-            ws.onclose = () => {
+            ws.onclose = (event) => {
+                console.log('WebSocket closed:', event.code, event.reason);
                 status.textContent = '⚠️ Connection closed';
                 status.className = 'status info';
                 isStreaming = false;
@@ -383,24 +404,38 @@
         }
 
         function sendFrames() {
-            if (!isStreaming || !ws || ws.readyState !== WebSocket.OPEN) {
+            if (!isStreaming) {
                 return;
             }
             
-            // Capture frame from video
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                console.warn('⚠️ WebSocket not ready. State:', ws?.readyState);
+                setTimeout(sendFrames, 100);
+                return;
+            }
             
-            // Convert to JPEG blob and read as binary
-            canvas.toBlob((blob) => {
-                if (ws && ws.readyState === WebSocket.OPEN) {
-                    const reader = new FileReader();
-                    reader.onload = () => {
-                        // Send frame data as binary
-                        ws.send(new Uint8Array(reader.result));
-                    };
-                    reader.readAsArrayBuffer(blob);
-                }
-            }, 'image/jpeg', 0.8);
+            try {
+                // Capture frame from video
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                
+                // Convert to JPEG blob and read as binary
+                canvas.toBlob((blob) => {
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        const reader = new FileReader();
+                        reader.onload = () => {
+                            try {
+                                // Send frame data as binary
+                                ws.send(new Uint8Array(reader.result));
+                            } catch (e) {
+                                console.error('Error sending frame:', e);
+                            }
+                        };
+                        reader.readAsArrayBuffer(blob);
+                    }
+                }, 'image/jpeg', 0.8);
+            } catch (e) {
+                console.error('Error in sendFrames:', e);
+            }
             
             // Send at ~30 FPS
             setTimeout(sendFrames, 33);

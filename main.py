@@ -354,7 +354,11 @@ async def stop_stream():
 @app.websocket("/ws/track")
 async def websocket_track(websocket: WebSocket):
     """WebSocket endpoint for real-time camera tracking from client devices"""
+    client_addr = websocket.client.host if websocket.client else "unknown"
+    print(f"[WS] New connection attempt from {client_addr}")
+    
     await websocket.accept()
+    print(f"[WS] Connection accepted from {client_addr}")
     
     tracker = None
     yolo = None
@@ -363,45 +367,66 @@ async def websocket_track(websocket: WebSocket):
     
     try:
         # Wait for initial config
+        print(f"[WS] Waiting for config from {client_addr}...")
         while True:
-            data = await websocket.receive_text()
             try:
+                data = await websocket.receive_text()
+                print(f"[WS] Received text data from {client_addr}: {data[:100]}")
+                
                 msg = json.loads(data)
                 if msg.get("type") == "config":
                     tracking_method = msg.get("tracking_method", "bytetrack")
                     confidence = msg.get("confidence", 0.5)
                     
+                    print(f"[WS] Config received: method={tracking_method}, conf={confidence}")
+                    
                     if tracking_method not in ALLOWED_TRACKERS:
-                        await websocket.send_json({"error": f"Invalid tracker: {tracking_method}"})
+                        error_msg = f"Invalid tracker: {tracking_method}"
+                        print(f"[WS] Error: {error_msg}")
+                        await websocket.send_json({"error": error_msg})
                         continue
                     
                     # Initialize tracker and model
+                    print(f"[WS] Loading YOLO model...")
                     yolo = load_yolo_model()
+                    print(f"[WS] Creating tracker: {tracking_method}")
                     tracker = create_tracker_instance(tracking_method)
                     config = TrackingConfig(
                         tracking_method=tracking_method,
                         confidence=confidence
                     )
                     
+                    print(f"[WS] Tracker ready! Sending confirmation to {client_addr}")
                     await websocket.send_json({
                         "status": "ready",
                         "tracker": tracking_method,
                         "message": "Ready to receive frames"
                     })
                     break
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as e:
+                print(f"[WS] JSON decode error: {e}")
                 continue
+            except Exception as e:
+                print(f"[WS] Error during config: {e}")
+                raise
         
         # Process incoming frames
+        print(f"[WS] Starting frame processing from {client_addr}")
+        frame_count = 0
         while True:
             try:
                 # Receive frame data (binary)
                 frame_data = await websocket.receive_bytes()
+                frame_count += 1
+                
+                if frame_count % 30 == 0:  # Log every 30 frames
+                    print(f"[WS] Received frame {frame_count} ({len(frame_data)} bytes) from {client_addr}")
                 
                 # Decode frame from JPEG
                 frame = cv2.imdecode(np.frombuffer(frame_data, np.uint8), cv2.IMREAD_COLOR)
                 
                 if frame is None:
+                    print(f"[WS] Failed to decode frame from {client_addr}")
                     continue
                 
                 # Process frame with tracking
@@ -411,6 +436,7 @@ async def websocket_track(websocket: WebSocket):
                 # Encode result as JPEG
                 ret, buffer = cv2.imencode('.jpg', annotated_frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
                 if not ret:
+                    print(f"[WS] Failed to encode result frame")
                     continue
                 
                 # Convert to base64 for JSON transport
@@ -425,15 +451,18 @@ async def websocket_track(websocket: WebSocket):
                 })
                 
             except WebSocketDisconnect:
-                print("Client disconnected")
+                print(f"[WS] Client {client_addr} disconnected after {frame_count} frames")
                 break
             except Exception as e:
-                print(f"Frame processing error: {e}")
-                await websocket.send_json({"error": str(e)})
+                print(f"[WS] Frame processing error from {client_addr}: {e}")
+                try:
+                    await websocket.send_json({"error": str(e)})
+                except:
+                    pass
                 break
     
     except Exception as e:
-        print(f"WebSocket error: {e}")
+        print(f"[WS] WebSocket error from {client_addr}: {e}")
         try:
             await websocket.send_json({"error": str(e)})
         except:
@@ -441,6 +470,7 @@ async def websocket_track(websocket: WebSocket):
     finally:
         try:
             await websocket.close()
+            print(f"[WS] Connection closed from {client_addr}")
         except:
             pass
 
