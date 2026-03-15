@@ -285,16 +285,19 @@
         const confValue = document.getElementById('confValue');
         const frameCountEl = document.getElementById('frameCount');
         const objectCountEl = document.getElementById('objectCount');
+        const frame_count_div = { textContent: '' }; // For debugging
         
         let ws = null;
         let isStreaming = false;
         let frameCount = 0;
         let objectCount = 0;
         let animationId = null;
-        let waitingForResponse = false;
-        let lastFrameTime = 0;
-        let frameSkipCounter = 0;
-        const FRAME_INTERVAL = 50; // ~20 FPS to reduce load
+        let nextFrameSeqNum = 0;
+        let lastDisplayedSeqNum = -1;
+        let sendingFrame = false;
+        const FRAME_INTERVAL = 100; // 10 FPS - slow and stable
+        let droppedFrames = 0;
+        let outOfOrderFrames = 0;
 
         // Update confidence display
         confSlider.addEventListener('input', (e) => {
@@ -374,25 +377,38 @@
                     if (data.status === 'ready') {
                         console.log('✅ Tracker ready:', data.tracker);
                     } else if (data.type === 'frame') {
-                        // Server sent back tracked frame
-                        waitingForResponse = false;
+                        // Check frame sequence to prevent out-of-order display
+                        const seqNum = data.seq_num;
+                        if (seqNum < lastDisplayedSeqNum) {
+                            outOfOrderFrames++;
+                            console.warn(`⚠️ Out-of-order frame: got seq ${seqNum}, expected >= ${lastDisplayedSeqNum}`);
+                            sendingFrame = false;
+                            sendFrames(); // Send next frame immediately
+                            return;
+                        }
+                        
+                        lastDisplayedSeqNum = seqNum;
                         const img = new Image();
                         img.src = data.frame_data;
                         img.onload = () => {
                             ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
                             frameCountEl.textContent = data.frame_num;
                             objectCountEl.textContent = data.object_count;
+                            frame_count_div.textContent = `Seq: ${seqNum} | FPS: ${(droppedFrames + outOfOrderFrames > 0 ? '⚠️' : '✓')}`;
+                            canvas.classList.remove('hidden');
                         };
-                        canvas.classList.remove('hidden');
+                        // Allow next frame to be sent
+                        sendingFrame = false;
+                        sendFrames();
                     } else if (data.error) {
                         console.error('Server error:', data.error);
                         status.textContent = `❌ Server error: ${data.error}`;
                         status.className = 'status error';
-                        waitingForResponse = false;
+                        sendingFrame = false;
                     }
                 } catch (e) {
                     console.error('Failed to parse message:', e);
-                    waitingForResponse = false;
+                    sendingFrame = false;
                 }
             };
             
@@ -411,7 +427,10 @@
         }
 
         function sendFrames() {
-            if (!isStreaming) {
+            if (!isStreaming || sendingFrame) {
+                if (isStreaming && !sendingFrame) {
+                    setTimeout(sendFrames, FRAME_INTERVAL);
+                }
                 return;
             }
             
@@ -422,53 +441,59 @@
             }
             
             try {
-                // Skip frame if we're still waiting for response from server
-                if (waitingForResponse) {
-                    frameSkipCounter++;
-                    setTimeout(sendFrames, 10);
-                    return;
-                }
-                
-                // Rate limit: only send frames every FRAME_INTERVAL ms
-                const now = Date.now();
-                if (now - lastFrameTime < FRAME_INTERVAL) {
-                    setTimeout(sendFrames, Math.max(1, FRAME_INTERVAL - (now - lastFrameTime)));
-                    return;
-                }
-                
-                lastFrameTime = now;
+                sendingFrame = true;
+                const currentSeqNum = nextFrameSeqNum++;
                 
                 // Capture frame from video
                 ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
                 
-                // Convert to JPEG blob and send
+                // Use a single canvas for encoding to ensure synchronous operation
                 canvas.toBlob((blob) => {
-                    if (ws && ws.readyState === WebSocket.OPEN && !waitingForResponse) {
-                        waitingForResponse = true;
+                    if (!blob) {
+                        console.error('Failed to create blob from canvas');
+                        sendingFrame = false;
+                        setTimeout(sendFrames, FRAME_INTERVAL);
+                        return;
+                    }
+                    
+                    if (ws && ws.readyState === WebSocket.OPEN) {
                         const reader = new FileReader();
                         reader.onload = () => {
                             try {
-                                // Send frame data as binary
-                                ws.send(new Uint8Array(reader.result));
+                                // Create a typed array with sequence number prefix
+                                const buffer = reader.result;
+                                const seqBuffer = new Uint8Array(4);
+                                const view = new DataView(seqBuffer.buffer);
+                                view.setUint32(0, currentSeqNum, true); // Little-endian
+                                
+                                // Combine: [seq_num (4 bytes)] [frame_data]
+                                const combinedBuffer = new Uint8Array(seqBuffer.length + buffer.byteLength);
+                                combinedBuffer.set(seqBuffer, 0);
+                                combinedBuffer.set(new Uint8Array(buffer), 4);
+                                
+                                ws.send(combinedBuffer);
                             } catch (e) {
                                 console.error('Error sending frame:', e);
-                                waitingForResponse = false;
+                                sendingFrame = false;
+                                setTimeout(sendFrames, FRAME_INTERVAL);
                             }
                         };
                         reader.readAsArrayBuffer(blob);
+                    } else {
+                        sendingFrame = false;
                     }
-                }, 'image/jpeg', 0.75); // Lower quality for faster processing
+                }, 'image/jpeg', 0.7); // Quality 0.7 for faster encoding
                 
             } catch (e) {
                 console.error('Error in sendFrames:', e);
+                sendingFrame = false;
+                setTimeout(sendFrames, FRAME_INTERVAL);
             }
-            
-            // Schedule next frame
-            setTimeout(sendFrames, 10);
         }
 
         function stopTracking() {
             isStreaming = false;
+            sendingFrame = false;
             
             if (ws) {
                 ws.close();
@@ -483,7 +508,7 @@
             }
             
             canvas.classList.add('hidden');
-            status.textContent = '⏹️ Tracking stopped';
+            status.textContent = `⏹️ Tracking stopped | Dropped: ${droppedFrames} | Out-of-order: ${outOfOrderFrames}`;
             status.className = 'status info';
             startBtn.disabled = false;
             stopBtn.disabled = true;

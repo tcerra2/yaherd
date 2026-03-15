@@ -519,20 +519,37 @@ async def websocket_track(websocket: WebSocket):
         # Process incoming frames
         print(f"[WS] Starting frame processing from {client_addr}")
         frame_count = 0
+        expected_seq_num = 0
         while True:
             try:
-                # Receive frame data (binary)
+                # Receive frame data (binary with sequence number prefix)
                 frame_data = await websocket.receive_bytes()
                 frame_count += 1
                 
-                if frame_count % 100 == 0:
-                    print(f"[WS] Frame {frame_count}: Received {len(frame_data)} bytes from {client_addr}")
+                # Extract sequence number from first 4 bytes
+                if len(frame_data) < 4:
+                    print(f"[WS] Frame {frame_count}: ERROR - Frame data too short ({len(frame_data)} bytes)")
+                    continue
+                
+                seq_num = int.from_bytes(frame_data[:4], byteorder='little', signed=False)
+                jpeg_data = frame_data[4:]
+                
+                if frame_count % 50 == 0:
+                    status_check = "✓" if seq_num == expected_seq_num else "✗ OUT-OF-ORDER"
+                    print(f"[WS] Frame {frame_count}: seq={seq_num} (expected={expected_seq_num}) {status_check} | Data: {len(jpeg_data)} bytes")
+                
+                # Check sequence order
+                if seq_num != expected_seq_num:
+                    if frame_count % 50 == 0:
+                        print(f"[WS] Frame {frame_count}: WARNING - Out-of-order frame! seq={seq_num}, expected={expected_seq_num}")
+                
+                expected_seq_num = seq_num + 1
                 
                 # Decode frame from JPEG
-                frame = cv2.imdecode(np.frombuffer(frame_data, np.uint8), cv2.IMREAD_COLOR)
+                frame = cv2.imdecode(np.frombuffer(jpeg_data, np.uint8), cv2.IMREAD_COLOR)
                 
                 if frame is None:
-                    print(f"[WS] Frame {frame_count}: ERROR - Failed to decode JPEG")
+                    print(f"[WS] Frame {frame_count}: ERROR - Failed to decode JPEG (seq={seq_num})")
                     continue
                 
                 # Process frame with tracking
@@ -540,7 +557,7 @@ async def websocket_track(websocket: WebSocket):
                 frame_num += 1
                 
                 # Encode result as JPEG
-                ret, buffer = cv2.imencode('.jpg', annotated_frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                ret, buffer = cv2.imencode('.jpg', annotated_frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
                 if not ret:
                     if frame_count % 100 == 0:
                         print(f"[WS] Frame {frame_count}: ERROR - Failed to encode result")
@@ -549,9 +566,10 @@ async def websocket_track(websocket: WebSocket):
                 # Convert to base64 for JSON transport
                 frame_base64 = base64.b64encode(buffer).decode()
                 
-                # Send back to client
+                # Send back to client with sequence number so it can validate ordering
                 await websocket.send_json({
                     "type": "frame",
+                    "seq_num": seq_num,
                     "frame_data": f"data:image/jpeg;base64,{frame_base64}",
                     "frame_num": frame_num,
                     "object_count": len(tracks_data)
