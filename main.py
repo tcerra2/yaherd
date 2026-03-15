@@ -68,10 +68,24 @@ class TrackingConfig(BaseModel):
 
 
 def load_yolo_model():
-    """Load YOLO model (cached)"""
+    """Load YOLO model (cached) - auto-download if needed"""
     global yolo_model
     if yolo_model is None:
-        yolo_model = YOLO("yolov8n.pt")
+        print("[YOLO] Loading model: yolov8n.pt")
+        try:
+            # Try loading from local file first
+            yolo_model = YOLO("yolov8n.pt")
+            print("[YOLO] Model loaded successfully!")
+        except Exception as e:
+            print(f"[YOLO] Error loading local model: {e}")
+            print("[YOLO] Attempting to download model from Ultralytics...")
+            try:
+                # Downloads from Ultralytics Hub if not found locally
+                yolo_model = YOLO("yolov8n.pt")
+                print("[YOLO] Model downloaded and loaded successfully!")
+            except Exception as e2:
+                print(f"[YOLO] CRITICAL ERROR: Could not load or download model: {e2}")
+                raise
     return yolo_model
 
 
@@ -96,16 +110,34 @@ def create_tracker_instance(tracking_method: str, reid_model: Optional[str] = No
 
 def process_frame_with_tracking(frame, tracker, yolo, config: TrackingConfig, frame_num=0):
     """Process a single frame for tracking"""
-    results = yolo(frame, conf=config.confidence, iou=config.iou_threshold, verbose=False)
-    result = results[0]
+    if frame is None:
+        print(f"[PROCESS] Frame {frame_num}: ERROR - frame is None")
+        return frame, []
     
-    # Get detections
-    dets = result.boxes.xyxy.cpu().numpy()
-    confs = result.boxes.conf.cpu().numpy()
-    classes = result.boxes.cls.cpu().numpy().astype(int)
+    if frame.size == 0:
+        print(f"[PROCESS] Frame {frame_num}: ERROR - frame is empty")
+        return frame, []
     
-    if frame_num % 30 == 0:
-        print(f"[YOLO] Frame {frame_num}: Found {len(dets)} detections")
+    # Run YOLO inference
+    try:
+        results = yolo(frame, conf=config.confidence, iou=config.iou_threshold, verbose=False)
+        result = results[0]
+        
+        # Get detections
+        dets = result.boxes.xyxy.cpu().numpy()
+        confs = result.boxes.conf.cpu().numpy()
+        classes = result.boxes.cls.cpu().numpy().astype(int)
+        
+        if frame_num % 30 == 0 or frame_num <= 3:
+            print(f"[YOLO] Frame {frame_num}: Detected {len(dets)} objects")
+            if len(dets) > 0:
+                print(f"[YOLO] Frame {frame_num}: Confidence scores: {confs}")
+    
+    except Exception as e:
+        print(f"[PROCESS] Frame {frame_num}: ERROR in YOLO inference: {e}")
+        import traceback
+        traceback.print_exc()
+        return frame, []
     
     # Filter by class if specified
     if config.class_filter:
@@ -115,23 +147,43 @@ def process_frame_with_tracking(frame, tracker, yolo, config: TrackingConfig, fr
         classes = classes[mask]
     
     # Update tracker
-    if len(dets) > 0:
-        dets_confs = np.concatenate([dets, confs.reshape(-1, 1)], axis=1)
-        tracks = tracker.update(dets_confs, frame)
-    else:
+    try:
+        if len(dets) > 0:
+            dets_confs = np.concatenate([dets, confs.reshape(-1, 1)], axis=1)
+            tracks = tracker.update(dets_confs, frame)
+        else:
+            tracks = np.array([])
+        
+        if frame_num % 30 == 0 or frame_num <= 3:
+            print(f"[TRACKER] Frame {frame_num}: Tracking {len(tracks)} objects")
+    
+    except Exception as e:
+        print(f"[PROCESS] Frame {frame_num}: ERROR in tracker update: {e}")
+        import traceback
+        traceback.print_exc()
         tracks = np.array([])
     
-    if frame_num % 30 == 0:
-        print(f"[TRACKER] Frame {frame_num}: Tracking {len(tracks)} objects")
-    
     # Draw results
-    annotated_frame = frame.copy()
-    if len(tracks) > 0:
-        for track in tracks:
-            x1, y1, x2, y2, track_id = track[:5].astype(int)
-            cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            cv2.putText(annotated_frame, f"ID: {int(track_id)}", (x1, y1 - 10),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+    try:
+        annotated_frame = frame.copy()
+        if len(tracks) > 0:
+            for track in tracks:
+                x1, y1, x2, y2, track_id = track[:5].astype(int)
+                # Draw bounding box
+                cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                # Draw label
+                label = f"ID: {int(track_id)}"
+                cv2.putText(annotated_frame, label, (x1, y1 - 10),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+        
+        if frame_num <= 3:
+            print(f"[DRAW] Frame {frame_num}: Drew {len(tracks)} bounding boxes")
+    
+    except Exception as e:
+        print(f"[PROCESS] Frame {frame_num}: ERROR drawing boxes: {e}")
+        import traceback
+        traceback.print_exc()
+        annotated_frame = frame.copy()
     
     # Prepare response data
     tracks_data = []
