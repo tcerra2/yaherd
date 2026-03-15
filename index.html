@@ -295,9 +295,11 @@
         let nextFrameSeqNum = 0;
         let lastDisplayedSeqNum = -1;
         let sendingFrame = false;
-        const FRAME_INTERVAL = 100; // 10 FPS - slow and stable
+        let frameInterval = 100; // Start at 10 FPS, will adapt
         let droppedFrames = 0;
         let outOfOrderFrames = 0;
+        let lastResponseTime = 0;
+        let frameSendTimes = {}; // Track send time for each frame
 
         // Update confidence display
         confSlider.addEventListener('input', (e) => {
@@ -372,34 +374,69 @@
             
             ws.onmessage = (event) => {
                 try {
-                    const data = JSON.parse(event.data);
-                    
-                    if (data.status === 'ready') {
-                        console.log('✅ Tracker ready:', data.tracker);
-                    } else if (data.type === 'frame') {
-                        // Check frame sequence to prevent out-of-order display
-                        const seqNum = data.seq_num;
-                        if (seqNum < lastDisplayedSeqNum) {
-                            outOfOrderFrames++;
-                            console.warn(`⚠️ Out-of-order frame: got seq ${seqNum}, expected >= ${lastDisplayedSeqNum}`);
+                    // Handle binary frame data
+                    if (event.data instanceof ArrayBuffer) {
+                        const view = new DataView(event.data);
+                        if (view.byteLength < 8) {
+                            console.error('Invalid frame response: too short');
                             sendingFrame = false;
-                            sendFrames(); // Send next frame immediately
                             return;
                         }
                         
+                        const seqNum = view.getUint32(0, true); // Little-endian
+                        const objectCount = view.getUint32(4, true);
+                        const jpegData = event.data.slice(8);
+                        
+                        // Check frame sequence
+                        if (seqNum < lastDisplayedSeqNum) {
+                            outOfOrderFrames++;
+                            console.warn(`⚠️ Out-of-order: got seq ${seqNum}, expected >= ${lastDisplayedSeqNum}`);
+                            sendingFrame = false;
+                            sendFrames();
+                            return;
+                        }
+                        
+                        // Calculate response time
+                        const sendTime = frameSendTimes[seqNum];
+                        if (sendTime) {
+                            lastResponseTime = Date.now() - sendTime;
+                            delete frameSendTimes[seqNum];
+                            
+                            // Adaptive FPS: increase if response is fast, decrease if slow
+                            if (lastResponseTime < 80) {
+                                frameInterval = Math.max(50, frameInterval - 5); // Speed up (min 50ms = 20 FPS)
+                            } else if (lastResponseTime > 150) {
+                                frameInterval = Math.min(200, frameInterval + 10); // Slow down (max 200ms = 5 FPS)
+                            }
+                        }
+                        
                         lastDisplayedSeqNum = seqNum;
+                        
+                        // Convert binary JPEG to image data URL
+                        const blob = new Blob([jpegData], { type: 'image/jpeg' });
+                        const url = URL.createObjectURL(blob);
                         const img = new Image();
-                        img.src = data.frame_data;
+                        img.src = url;
                         img.onload = () => {
                             ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-                            frameCountEl.textContent = data.frame_num;
-                            objectCountEl.textContent = data.object_count;
-                            frame_count_div.textContent = `Seq: ${seqNum} | FPS: ${(droppedFrames + outOfOrderFrames > 0 ? '⚠️' : '✓')}`;
+                            frameCountEl.textContent = seqNum;
+                            objectCountEl.textContent = objectCount;
+                            frame_count_div.textContent = `Seq: ${seqNum} | RTT: ${lastResponseTime}ms | Interval: ${frameInterval.toFixed(0)}ms`;
                             canvas.classList.remove('hidden');
+                            URL.revokeObjectURL(url);
                         };
-                        // Allow next frame to be sent
+                        
                         sendingFrame = false;
                         sendFrames();
+                        return;
+                    }
+                    
+                    // Handle JSON messages (status, errors)
+                    const data = JSON.parse(event.data);
+                    if (data.status === 'ready') {
+                        console.log('✅ Tracker ready:', data.tracker);
+                        status.textContent = '✅ Connected! Streaming frames...';
+                        status.className = 'status success';
                     } else if (data.error) {
                         console.error('Server error:', data.error);
                         status.textContent = `❌ Server error: ${data.error}`;
@@ -429,7 +466,7 @@
         function sendFrames() {
             if (!isStreaming || sendingFrame) {
                 if (isStreaming && !sendingFrame) {
-                    setTimeout(sendFrames, FRAME_INTERVAL);
+                    setTimeout(sendFrames, frameInterval);
                 }
                 return;
             }
@@ -447,12 +484,12 @@
                 // Capture frame from video
                 ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
                 
-                // Use a single canvas for encoding to ensure synchronous operation
+                // Encode to JPEG and send
                 canvas.toBlob((blob) => {
                     if (!blob) {
                         console.error('Failed to create blob from canvas');
                         sendingFrame = false;
-                        setTimeout(sendFrames, FRAME_INTERVAL);
+                        setTimeout(sendFrames, frameInterval);
                         return;
                     }
                     
@@ -460,34 +497,35 @@
                         const reader = new FileReader();
                         reader.onload = () => {
                             try {
-                                // Create a typed array with sequence number prefix
-                                const buffer = reader.result;
+                                // Create binary message: [seq_num(4 bytes)] [frame_data]
                                 const seqBuffer = new Uint8Array(4);
                                 const view = new DataView(seqBuffer.buffer);
                                 view.setUint32(0, currentSeqNum, true); // Little-endian
                                 
-                                // Combine: [seq_num (4 bytes)] [frame_data]
-                                const combinedBuffer = new Uint8Array(seqBuffer.length + buffer.byteLength);
-                                combinedBuffer.set(seqBuffer, 0);
-                                combinedBuffer.set(new Uint8Array(buffer), 4);
+                                const frameBuffer = new Uint8Array(reader.result);
+                                const combined = new Uint8Array(seqBuffer.length + frameBuffer.length);
+                                combined.set(seqBuffer, 0);
+                                combined.set(frameBuffer, 4);
                                 
-                                ws.send(combinedBuffer);
+                                // Record send time for RTT calculation
+                                frameSendTimes[currentSeqNum] = Date.now();
+                                ws.send(combined);
                             } catch (e) {
                                 console.error('Error sending frame:', e);
                                 sendingFrame = false;
-                                setTimeout(sendFrames, FRAME_INTERVAL);
+                                setTimeout(sendFrames, frameInterval);
                             }
                         };
                         reader.readAsArrayBuffer(blob);
                     } else {
                         sendingFrame = false;
                     }
-                }, 'image/jpeg', 0.7); // Quality 0.7 for faster encoding
+                }, 'image/jpeg', 0.65); // Lower quality for speed
                 
             } catch (e) {
                 console.error('Error in sendFrames:', e);
                 sendingFrame = false;
-                setTimeout(sendFrames, FRAME_INTERVAL);
+                setTimeout(sendFrames, frameInterval);
             }
         }
 
