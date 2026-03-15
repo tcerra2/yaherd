@@ -7,9 +7,5 @@ numReplicas = 1
 startCommand = "python main.py"
 
 [[env]]
-name = "PORT"
-value = "8000"
-
-[[env]]
 name = "PYTHONUNBUFFERED"
 value = "1"
