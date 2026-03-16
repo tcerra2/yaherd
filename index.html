@@ -386,6 +386,10 @@
                         const objectCount = view.getUint32(4, true);
                         const jpegData = event.data.slice(8);
                         
+                        if (seqNum <= 3) {
+                            console.log(`[RECV] Frame ${seqNum}: Got response with ${objectCount} objects, JPEG size: ${jpegData.byteLength} bytes`);
+                        }
+                        
                         // Check frame sequence
                         if (seqNum < lastDisplayedSeqNum) {
                             outOfOrderFrames++;
@@ -416,11 +420,21 @@
                         const url = URL.createObjectURL(blob);
                         const img = new Image();
                         img.src = url;
+                        img.onerror = () => {
+                            console.error(`[IMG] Frame ${seqNum}: Image failed to load!`);
+                            sendingFrame = false;
+                        };
                         img.onload = () => {
+                            if (seqNum <= 3) {
+                                console.log(`[IMG] Frame ${seqNum}: Image loaded, drawing to canvas...`);
+                            }
                             ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
                             frameCountEl.textContent = seqNum;
                             objectCountEl.textContent = objectCount;
                             frame_count_div.textContent = `Seq: ${seqNum} | RTT: ${lastResponseTime}ms | Interval: ${frameInterval.toFixed(0)}ms`;
+                            if (seqNum <= 3) {
+                                console.log(`[IMG] Frame ${seqNum}: Counters updated - Frames=${seqNum}, Objects=${objectCount}`);
+                            }
                             canvas.classList.remove('hidden');
                             URL.revokeObjectURL(url);
                         };
