@@ -319,23 +319,32 @@
                 });
                 
                 video.srcObject = stream;
-                canvas.width = video.videoWidth || 640;
-                canvas.height = video.videoHeight || 480;
+                video.play();  // CRITICAL: Start video playback
                 
-                // Wait for video to load
-                video.onloadedmetadata = () => {
-                    canvas.width = video.videoWidth;
-                    canvas.height = video.videoHeight;
-                    
-                    status.textContent = '📡 Connecting to server...';
-                    connectWebSocket();
-                    isStreaming = true;
-                    startBtn.disabled = true;
-                    stopBtn.disabled = false;
-                    
-                    // Start sending frames
-                    sendFrames();
-                };
+                // Wait for video metadata to load
+                await new Promise((resolve) => {
+                    video.onloadedmetadata = () => {
+                        console.log(`📷 Video loaded: ${video.videoWidth}x${video.videoHeight}`);
+                        canvas.width = video.videoWidth || 640;
+                        canvas.height = video.videoHeight || 480;
+                        console.log(`🖼️ Canvas dimensions set to: ${canvas.width}x${canvas.height}`);
+                        resolve();
+                    };
+                });
+                
+                // Wait for video to actually start playing
+                await new Promise((resolve) => {
+                    video.onplaying = () => {
+                        console.log('▶️ Video is now playing');
+                        resolve();
+                    };
+                });
+                
+                status.textContent = '📡 Connecting to server...';
+                connectWebSocket();
+                isStreaming = true;
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
                 
             } catch (error) {
                 status.textContent = `❌ Error: ${error.message}`;
