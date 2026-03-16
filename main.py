@@ -586,21 +586,11 @@ async def websocket_track(websocket: WebSocket):
                 send_start = time.time()
                 response = bytearray()
                 response.extend(seq_num.to_bytes(4, byteorder='little', signed=False))
-                object_count = len(tracks_data)
-                response.extend(object_count.to_bytes(4, byteorder='little', signed=False))
+                response.extend(len(tracks_data).to_bytes(4, byteorder='little', signed=False))
                 response.extend(frame_buffer.tobytes())
                 
-                try:
-                    await websocket.send_bytes(bytes(response))
-                    send_time = time.time() - send_start
-                    
-                    if frame_num <= 3:
-                        print(f"[SEND] Frame {seq_num}: Response sent! Size={len(response)} bytes, ObjectCount={object_count}, ResponseTime={send_time*1000:.0f}ms")
-                    
-                except Exception as send_err:
-                    print(f"[SEND] Frame {seq_num}: ERROR sending response - {send_err}")
-                    raise
-                
+                await websocket.send_bytes(bytes(response))
+                send_time = time.time() - send_start
                 total_time = time.time() - recv_time
                 last_sent_time = time.time()
                 
