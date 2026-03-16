@@ -557,52 +557,82 @@ async def websocket_track(websocket: WebSocket):
                 
                 # Extract sequence number from first 4 bytes
                 if len(frame_data) < 4:
+                    print(f"[WS] Frame {frame_count}: Skipped - data too short: {len(frame_data)} bytes")
                     continue
                 
                 seq_num = int.from_bytes(frame_data[:4], byteorder='little', signed=False)
                 jpeg_data = frame_data[4:]
+                print(f"[WS] Frame {seq_num}: Received {len(frame_data)} bytes total, {len(jpeg_data)} JPEG bytes")
                 
                 # Check sequence order - skip if out of order
                 if seq_num != expected_seq_num:
                     dropped_frames += 1
-                    if frame_count % 50 == 0:
-                        print(f"[WS] Frame {frame_count}: Skipped out-of-order frame (seq={seq_num}, expected={expected_seq_num})")
+                    print(f"[WS] Frame {seq_num}: Out-of-order (expected {expected_seq_num}), skipping")
                     expected_seq_num = seq_num + 1
                     continue
                 
                 expected_seq_num = seq_num + 1
                 
                 # Decode frame from JPEG
-                decode_start = time.time()
-                frame = cv2.imdecode(np.frombuffer(jpeg_data, np.uint8), cv2.IMREAD_COLOR)
-                decode_time = time.time() - decode_start
-                
-                if frame is None:
+                try:
+                    decode_start = time.time()
+                    frame = cv2.imdecode(np.frombuffer(jpeg_data, np.uint8), cv2.IMREAD_COLOR)
+                    decode_time = time.time() - decode_start
+                    
+                    if frame is None:
+                        print(f"[WS] Frame {seq_num}: ERROR - JPEG decode failed!")
+                        continue
+                    
+                    print(f"[WS] Frame {seq_num}: Decoded {frame.shape}, DecodeTime: {decode_time*1000:.1f}ms")
+                except Exception as e:
+                    print(f"[WS] Frame {seq_num}: ERROR decoding JPEG - {e}")
                     continue
                 
                 # Process frame with tracking - THIS DRAWS THE BOXES
-                process_start = time.time()
-                annotated_frame, tracks_data = process_frame_with_tracking(frame, tracker, yolo, config, frame_count)
-                process_time = time.time() - process_start
-                frame_num += 1
+                try:
+                    process_start = time.time()
+                    annotated_frame, tracks_data = process_frame_with_tracking(frame, tracker, yolo, config, frame_count)
+                    process_time = time.time() - process_start
+                    frame_num += 1
+                    print(f"[WS] Frame {seq_num}: Processed in {process_time*1000:.1f}ms, {len(tracks_data)} tracks")
+                except Exception as e:
+                    print(f"[WS] Frame {seq_num}: ERROR processing frame - {e}")
+                    import traceback
+                    traceback.print_exc()
+                    continue
                 
                 # Encode result as JPEG (binary, no base64)
-                encode_start = time.time()
-                ret, frame_buffer = cv2.imencode('.jpg', annotated_frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
-                encode_time = time.time() - encode_start
-                
-                if not ret:
+                try:
+                    encode_start = time.time()
+                    ret, frame_buffer = cv2.imencode('.jpg', annotated_frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                    encode_time = time.time() - encode_start
+                    
+                    if not ret:
+                        print(f"[WS] Frame {seq_num}: ERROR - JPEG encode failed!")
+                        continue
+                    
+                    print(f"[WS] Frame {seq_num}: Encoded in {encode_time*1000:.1f}ms, {len(frame_buffer.tobytes())} bytes")
+                except Exception as e:
+                    print(f"[WS] Frame {seq_num}: ERROR encoding JPEG - {e}")
                     continue
                 
                 # Send response as binary: [seq_num(4)] [object_count(4)] [jpeg_data]
-                send_start = time.time()
-                response = bytearray()
-                response.extend(seq_num.to_bytes(4, byteorder='little', signed=False))
-                response.extend(len(tracks_data).to_bytes(4, byteorder='little', signed=False))
-                response.extend(frame_buffer.tobytes())
+                try:
+                    send_start = time.time()
+                    response = bytearray()
+                    response.extend(seq_num.to_bytes(4, byteorder='little', signed=False))
+                    response.extend(len(tracks_data).to_bytes(4, byteorder='little', signed=False))
+                    response.extend(frame_buffer.tobytes())
+                    
+                    await websocket.send_bytes(bytes(response))
+                    send_time = time.time() - send_start
+                    print(f"[WS] Frame {seq_num}: Response sent! {len(response)} bytes in {send_time*1000:.1f}ms")
+                except Exception as e:
+                    print(f"[WS] Frame {seq_num}: ERROR sending response - {e}")
+                    import traceback
+                    traceback.print_exc()
+                    raise
                 
-                await websocket.send_bytes(bytes(response))
-                send_time = time.time() - send_start
                 total_time = time.time() - recv_time
                 last_sent_time = time.time()
                 
@@ -610,15 +640,13 @@ async def websocket_track(websocket: WebSocket):
                 if len(processing_times) > 50:
                     processing_times.pop(0)
                 
-                if frame_count % 50 == 0:
-                    avg_process = sum(processing_times) / len(processing_times)
-                    print(f"[WS] Frame {seq_num}: Total={total_time*1000:.0f}ms (decode={decode_time*1000:.0f}ms, process={avg_process*1000:.0f}ms, encode={encode_time*1000:.0f}ms, send={send_time*1000:.0f}ms) | Objects: {len(tracks_data)} | Dropped: {dropped_frames}")
-                
             except WebSocketDisconnect:
                 print(f"[WS] Client {client_addr} disconnected after {frame_count} frames (dropped: {dropped_frames})")
                 break
             except Exception as e:
-                print(f"[WS] Frame {frame_count}: ERROR - {e}")
+                print(f"[WS] Frame {frame_count}: CRITICAL ERROR - {e}")
+                import traceback
+                traceback.print_exc()
                 try:
                     await websocket.send_json({"error": str(e)})
                 except:
