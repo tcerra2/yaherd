@@ -545,15 +545,10 @@ async def websocket_track(websocket: WebSocket):
                 
                 # Extract sequence number from first 4 bytes
                 if len(frame_data) < 4:
-                    if frame_count <= 3:
-                        print(f"[RECV] Frame {seq_num}: ERROR - frame_data too short: {len(frame_data)} bytes")
                     continue
                 
                 seq_num = int.from_bytes(frame_data[:4], byteorder='little', signed=False)
                 jpeg_data = frame_data[4:]
-                
-                if seq_num <= 3:
-                    print(f"[RECV] Seq {seq_num}: Total bytes={len(frame_data)}, JPEG bytes={len(jpeg_data)}")
                 
                 # Check sequence order - skip if out of order
                 if seq_num != expected_seq_num:
@@ -571,16 +566,11 @@ async def websocket_track(websocket: WebSocket):
                 decode_time = time.time() - decode_start
                 
                 if frame is None:
-                    if seq_num <= 3:
-                        print(f"[RECV] Seq {seq_num}: ERROR - frame decode failed! JPEG size: {len(jpeg_data)} bytes")
                     continue
-                
-                if seq_num <= 3:
-                    print(f"[RECV] Seq {seq_num}: Frame decoded successfully! Shape: {frame.shape}, DecodeTime: {decode_time*1000:.1f}ms")
                 
                 # Process frame with tracking - THIS DRAWS THE BOXES
                 process_start = time.time()
-                annotated_frame, tracks_data = process_frame_with_tracking(frame, tracker, yolo, config, seq_num)
+                annotated_frame, tracks_data = process_frame_with_tracking(frame, tracker, yolo, config, frame_count)
                 process_time = time.time() - process_start
                 frame_num += 1
                 
@@ -604,11 +594,11 @@ async def websocket_track(websocket: WebSocket):
                     await websocket.send_bytes(bytes(response))
                     send_time = time.time() - send_start
                     
-                    if seq_num <= 3:
-                        print(f"[SEND] Seq {seq_num}: Response sent! Size={len(response)} bytes, ObjectCount={object_count}, ResponseTime={send_time*1000:.0f}ms")
+                    if frame_num <= 3:
+                        print(f"[SEND] Frame {seq_num}: Response sent! Size={len(response)} bytes, ObjectCount={object_count}, ResponseTime={send_time*1000:.0f}ms")
                     
                 except Exception as send_err:
-                    print(f"[SEND] Seq {seq_num}: ERROR sending response - {send_err}")
+                    print(f"[SEND] Frame {seq_num}: ERROR sending response - {send_err}")
                     raise
                 
                 total_time = time.time() - recv_time
