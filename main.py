@@ -154,10 +154,8 @@ def process_frame_with_tracking(frame, tracker, yolo, config: TrackingConfig, fr
         confs = result.boxes.conf.cpu().numpy()
         classes = result.boxes.cls.cpu().numpy().astype(int)
         
-        if frame_num % 50 == 0 or frame_num <= 3:
-            print(f"[YOLO] Frame {frame_num}: Detected {len(dets)} objects | Conf threshold: {config.confidence} | Frame shape: {frame.shape}")
-            if len(dets) > 0 and frame_num <= 3:
-                print(f"[YOLO] Frame {frame_num}: First detection - box: {dets[0]} conf: {confs[0]} class: {classes[0]}")
+        if frame_num % 100 == 0:
+            print(f"[YOLO] Frame {frame_num}: Detected {len(dets)} objects")
     
     except Exception as e:
         if frame_num % 50 == 0:
@@ -180,20 +178,12 @@ def process_frame_with_tracking(frame, tracker, yolo, config: TrackingConfig, fr
                 confs.reshape(-1, 1),
                 classes.reshape(-1, 1)
             ], axis=1)
-            
-            if frame_num <= 3:
-                print(f"[TRACKER] Frame {frame_num}: Input format check - shape: {dets_confs.shape}, first row: {dets_confs[0]}")
-            
             tracks = tracker.update(dets_confs, frame)
-            
-            if frame_num <= 3 or frame_num % 50 == 0:
-                print(f"[TRACKER] Frame {frame_num}: Got {len(tracks)} tracks from {len(dets)} detections")
-                if len(tracks) > 0 and frame_num <= 3:
-                    print(f"[TRACKER] Frame {frame_num}: First track - {tracks[0]}")
         else:
             tracks = np.array([])
-            if frame_num <= 3:
-                print(f"[TRACKER] Frame {frame_num}: No detections, skipping tracking")
+        
+        if frame_num % 100 == 0:
+            print(f"[TRACKER] Frame {frame_num}: Tracking {len(tracks)} objects")
     
     except Exception as e:
         if frame_num % 50 == 0:
