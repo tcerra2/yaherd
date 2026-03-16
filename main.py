@@ -551,18 +551,20 @@ async def websocket_track(websocket: WebSocket):
         while True:
             try:
                 # Receive frame data (binary with sequence number prefix)
+                print(f"[WS] Waiting for frame...", flush=True)
                 frame_data = await websocket.receive_bytes()
                 frame_count += 1
+                print(f"[WS] *** FRAME RECEIVED: {len(frame_data)} bytes total ***", flush=True)
                 recv_time = time.time()
                 
                 # Extract sequence number from first 4 bytes
                 if len(frame_data) < 4:
-                    print(f"[WS] Frame {frame_count}: Skipped - data too short: {len(frame_data)} bytes")
+                    print(f"[WS] Frame {frame_count}: Skipped - data too short: {len(frame_data)} bytes", flush=True)
                     continue
                 
                 seq_num = int.from_bytes(frame_data[:4], byteorder='little', signed=False)
                 jpeg_data = frame_data[4:]
-                print(f"[WS] Frame {seq_num}: Received {len(frame_data)} bytes total, {len(jpeg_data)} JPEG bytes")
+                print(f"[WS] Frame {seq_num}: Received {len(frame_data)} bytes total, {len(jpeg_data)} JPEG bytes", flush=True)
                 
                 # Check sequence order - skip if out of order
                 if seq_num != expected_seq_num:
@@ -641,10 +643,10 @@ async def websocket_track(websocket: WebSocket):
                     processing_times.pop(0)
                 
             except WebSocketDisconnect:
-                print(f"[WS] Client {client_addr} disconnected after {frame_count} frames (dropped: {dropped_frames})")
+                print(f"[WS] Client {client_addr} disconnected after {frame_count} frames (dropped: {dropped_frames})", flush=True)
                 break
             except Exception as e:
-                print(f"[WS] Frame {frame_count}: CRITICAL ERROR - {e}")
+                print(f"[WS] Frame {frame_count}: CRITICAL ERROR - {e}", flush=True)
                 import traceback
                 traceback.print_exc()
                 try:
