@@ -531,6 +531,12 @@
                                 frameSendTimes[currentSeqNum] = Date.now();
                                 ws.send(combined);
                                 console.log(`[SEND] Frame ${currentSeqNum}: Sent successfully`);
+                                
+                                // Reset flag and schedule next frame
+                                sendingFrame = false;
+                                if (isStreaming) {
+                                    setTimeout(sendFrames, frameInterval);
+                                }
                             } catch (e) {
                                 console.error('Error sending frame:', e);
                                 sendingFrame = false;
