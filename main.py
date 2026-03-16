@@ -120,18 +120,40 @@ def create_tracker_instance(tracking_method: str, reid_model: Optional[str] = No
     if tracking_method not in ALLOWED_TRACKERS:
         raise ValueError(f"Unsupported tracker: {tracking_method}. Allowed: {ALLOWED_TRACKERS}")
     
-    reid_model = reid_model or str(WEIGHTS / 'osnet_x0_25_msmt17.pt')
+    # Only some trackers need reid models (appearance-based trackers)
+    # ByteTrack, OCSORT use motion only - no reid needed
+    # DeepOCSORT, StrongSORT, BoTSORT use reid - need appearance model
+    trackers_needing_reid = ["deepocsort", "strongsort", "botsort", "hybridsort"]
+    
+    if tracking_method in trackers_needing_reid:
+        if reid_model is None:
+            try:
+                reid_model = str(WEIGHTS / 'osnet_x0_25_msmt17.pt')
+            except Exception as e:
+                print(f"[TRACK] Warning: Could not access WEIGHTS path: {e}, using default")
+                reid_model = "osnet_x0_25_msmt17.pt"  # Let boxmot download it
+    else:
+        # ByteTrack, OCSORT don't need reid models
+        reid_model = None
+    
     tracking_config = TRACKER_CONFIGS / (tracking_method + '.yaml')
     
-    tracker = create_tracker(
-        tracking_method,
-        tracking_config,
-        reid_model,
-        device,
-        half=False,
-        per_class=False
-    )
-    return tracker
+    print(f"[TRACK] Creating {tracking_method} tracker with reid_model={reid_model}")
+    
+    try:
+        tracker = create_tracker(
+            tracking_method,
+            tracking_config,
+            reid_model,
+            device,
+            half=False,
+            per_class=False
+        )
+        print(f"[TRACK] ✅ Tracker created successfully")
+        return tracker
+    except Exception as e:
+        print(f"[TRACK] ❌ Error creating tracker: {e}")
+        raise
 
 
 def process_frame_with_tracking(frame, tracker, yolo, config: TrackingConfig, frame_num=0):
