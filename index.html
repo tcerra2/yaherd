@@ -479,6 +479,7 @@
         function sendFrames() {
             if (!isStreaming || !configReady || sendingFrame) {
                 if (isStreaming && !sendingFrame) {
+                    console.log(`sendFrames rescheduled: isStreaming=${isStreaming}, configReady=${configReady}, sendingFrame=${sendingFrame}`);
                     setTimeout(sendFrames, frameInterval);
                 }
                 return;
@@ -491,11 +492,13 @@
             }
             
             try {
+                console.log(`[SEND] Ready to capture frame ${nextFrameSeqNum}`);
                 sendingFrame = true;
                 const currentSeqNum = nextFrameSeqNum++;
                 
                 // Capture frame from video
                 ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                console.log(`[SEND] Frame ${currentSeqNum}: Canvas captured`);
                 
                 // Encode to JPEG and send
                 canvas.toBlob((blob) => {
@@ -505,6 +508,8 @@
                         setTimeout(sendFrames, frameInterval);
                         return;
                     }
+                    
+                    console.log(`[SEND] Frame ${currentSeqNum}: Blob created (${blob.size} bytes)`);
                     
                     if (ws && ws.readyState === WebSocket.OPEN) {
                         const reader = new FileReader();
@@ -520,9 +525,12 @@
                                 combined.set(seqBuffer, 0);
                                 combined.set(frameBuffer, 4);
                                 
+                                console.log(`[SEND] Frame ${currentSeqNum}: Sending ${combined.length} bytes (seq:4 + jpeg:${frameBuffer.length})`);
+                                
                                 // Record send time for RTT calculation
                                 frameSendTimes[currentSeqNum] = Date.now();
                                 ws.send(combined);
+                                console.log(`[SEND] Frame ${currentSeqNum}: Sent successfully`);
                             } catch (e) {
                                 console.error('Error sending frame:', e);
                                 sendingFrame = false;
@@ -531,6 +539,7 @@
                         };
                         reader.readAsArrayBuffer(blob);
                     } else {
+                        console.error(`WebSocket closed before sending frame ${currentSeqNum}`);
                         sendingFrame = false;
                     }
                 }, 'image/jpeg', 0.65); // Lower quality for speed
