@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YOLO Live Tracking</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            max-width: 900px;
+            width: 100%;
+            padding: 30px;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .header h1 {
+            color: #333;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        
+        .header p {
+            color: #666;
+            font-size: 1.1em;
+        }
+        
+        .controls {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        
+        .control-group label {
+            font-weight: 600;
+            color: #333;
+            font-size: 0.95em;
+        }
+        
+        .control-group select,
+        .control-group input {
+            padding: 10px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 1em;
+            transition: border-color 0.3s;
+        }
+        
+        .control-group select:focus,
+        .control-group input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        
+        button {
+            flex: 1;
+            padding: 12px 20px;
+            font-size: 1em;
+            font-weight: 600;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .btn-start {
+            background: #4CAF50;
+            color: white;
+        }
+        
+        .btn-start:hover {
+            background: #45a049;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(76, 175, 80, 0.4);
+        }
+        
+        .btn-stop {
+            background: #f44336;
+            color: white;
+        }
+        
+        .btn-stop:hover {
+            background: #da190b;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(244, 67, 54, 0.4);
+        }
+        
+        .btn-stop:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .video-container {
+            position: relative;
+            width: 100%;
+            max-width: 640px;
+            margin: 0 auto;
+            margin-bottom: 20px;
+            background: #000;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+        }
+        
+        .video-wrapper {
+            position: relative;
+            width: 100%;
+            padding-bottom: 75%;
+            height: 0;
+        }
+        
+        #localVideo,
+        #remoteCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+        
+        #remoteCanvas.visible {
+            z-index: 10;
+            display: block;
+        }
+        
+        #localVideo.hidden-video {
+            display: none;
+        }
+        
+        .status {
+            text-align: center;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+            font-weight: 600;
+        }
+        
+        .status.info {
+            background: #e3f2fd;
+            color: #1976d2;
+        }
+        
+        .status.success {
+            background: #e8f5e9;
+            color: #388e3c;
+        }
+        
+        .status.error {
+            background: #ffebee;
+            color: #c62828;
+        }
+        
+        .stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-top: 20px;
+        }
+        
+        .stat {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        
+        .stat-label {
+            font-size: 0.9em;
+            color: #666;
+            margin-bottom: 5px;
+        }
+        
+        .stat-value {
+            font-size: 1.5em;
+            font-weight: 700;
+            color: #333;
+        }
+        
+        .hidden {
+            display: none;
+        }
+        
+        @media (max-width: 768px) {
+            .controls {
+                grid-template-columns: 1fr;
+            }
+            
+            .header h1 {
+                font-size: 1.8em;
+            }
+            
+            .button-group {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎥 YOLO Live Tracking</h1>
+            <p>Real-time object detection and tracking from your device</p>
+        </div>
+        
+        <div class="controls">
+            <div class="control-group">
+                <label for="trackerSelect">Tracking Method:</label>
+                <select id="trackerSelect">
+                    <option value="bytetrack">ByteTrack (Fast)</option>
+                    <option value="botsort">BoTSORT</option>
+                    <option value="deepocsort">DeepOCSORT</option>
+                    <option value="ocsort">OCSORT</option>
+                    <option value="strongsort">StrongSORT</option>
+                    <option value="hybridsort">HybridSORT</option>
+                </select>
+            </div>
+            
+            <div class="control-group">
+                <label for="confidenceSlider">Confidence: <span id="confValue">0.5</span></label>
+                <input type="range" id="confidenceSlider" min="0.1" max="1" step="0.05" value="0.5">
+            </div>
+        </div>
+        
+        <div class="button-group">
+            <button class="btn-start" id="startBtn" onclick="startTracking()">Start Tracking</button>
+            <button class="btn-stop" id="stopBtn" onclick="stopTracking()" disabled>Stop Tracking</button>
+        </div>
+        
+        <div class="video-container">
+            <div class="video-wrapper">
+                <video id="localVideo" autoplay playsinline muted></video>
+                <canvas id="remoteCanvas" class="hidden"></canvas>
+            </div>
+        </div>
+        
+        <div class="status info" id="status">Ready to start tracking. Click "Start Tracking" to begin.</div>
+        
+        <div class="stats">
+            <div class="stat">
+                <div class="stat-label">Frames Processed</div>
+                <div class="stat-value" id="frameCount">0</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">Objects Tracked</div>
+                <div class="stat-value" id="objectCount">0</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">Detection Status</div>
+                <div class="stat-value" id="detectionStatus" style="font-size: 0.9em; color: #666;">Waiting...</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">Response Time</div>
+                <div class="stat-value" id="rttValue" style="font-size: 0.9em; color: #666;">-ms</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const video = document.getElementById('localVideo');
+        const canvas = document.getElementById('remoteCanvas');
+        const ctx = canvas.getContext('2d');
+        const status = document.getElementById('status');
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const confSlider = document.getElementById('confidenceSlider');
+        const confValue = document.getElementById('confValue');
+        const frameCountEl = document.getElementById('frameCount');
+        const objectCountEl = document.getElementById('objectCount');
+        const frame_count_div = { textContent: '' }; // For debugging
+        
+        let ws = null;
+        let isStreaming = false;
+        let frameCount = 0;
+        let objectCount = 0;
+        let animationId = null;
+        let nextFrameSeqNum = 0;
+        let lastDisplayedSeqNum = -1;
+        let sendingFrame = false;
+        let frameInterval = 100; // Start at 10 FPS, will adapt
+        let droppedFrames = 0;
+        let outOfOrderFrames = 0;
+        let lastResponseTime = 0;
+        let frameSendTimes = {}; // Track send time for each frame
+        let configReady = false; // CRITICAL: Wait for server config before sending frames
+
+        // Update confidence display
+        confSlider.addEventListener('input', (e) => {
+            confValue.textContent = e.target.value;
+        });
+
+        async function startTracking() {
+            try {
+                status.textContent = '📹 Requesting camera access...';
+                status.className = 'status info';
+                
+                // Request camera access
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { width: { ideal: 640 }, height: { ideal: 480 } },
+                    audio: false
+                });
+                
+                video.srcObject = stream;
+                video.play();  // CRITICAL: Start video playback
+                
+                // Wait for video metadata to load
+                await new Promise((resolve) => {
+                    video.onloadedmetadata = () => {
+                        console.log(`📷 Video loaded: ${video.videoWidth}x${video.videoHeight}`);
+                        canvas.width = video.videoWidth || 640;
+                        canvas.height = video.videoHeight || 480;
+                        console.log(`🖼️ Canvas dimensions set to: ${canvas.width}x${canvas.height}`);
+                        resolve();
+                    };
+                });
+                
+                // Wait for video to actually start playing
+                await new Promise((resolve) => {
+                    video.onplaying = () => {
+                        console.log('▶️ Video is now playing');
+                        resolve();
+                    };
+                });
+                
+                status.textContent = '📡 Connecting to server...';
+                connectWebSocket();
+                isStreaming = true;
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                
+            } catch (error) {
+                status.textContent = `❌ Error: ${error.message}`;
+                status.className = 'status error';
+                console.error('Error accessing camera:', error);
+            }
+        }
+
+        function connectWebSocket() {
+            // Get server URL from current page
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const host = window.location.host;
+            const wsUrl = `${protocol}//${host}/ws/track`;
+            
+            console.log(`📡 Attempting WebSocket connection to: ${wsUrl}`);
+            status.textContent = `📡 Connecting to WebSocket: ${wsUrl}`;
+            status.className = 'status info';
+            
+            ws = new WebSocket(wsUrl);
+            
+            ws.onopen = () => {
+                console.log('✅ WebSocket connected!');
+                status.textContent = '📤 Sending configuration...';
+                configReady = false; // Reset flag
+                
+                // Send config
+                const config = {
+                    type: 'config',
+                    tracking_method: document.getElementById('trackerSelect').value,
+                    confidence: parseFloat(confSlider.value)
+                };
+                console.log('Sending config:', config);
+                ws.send(JSON.stringify(config));
+            };
+            
+            ws.onmessage = (event) => {
+                try {
+                    // Handle binary frame data
+                    if (event.data instanceof ArrayBuffer) {
+                        const view = new DataView(event.data);
+                        if (view.byteLength < 8) {
+                            console.error('Invalid frame response: too short');
+                            sendingFrame = false;
+                            return;
+                        }
+                        
+                        const seqNum = view.getUint32(0, true); // Little-endian
+                        const objectCount = view.getUint32(4, true);
+                        const jpegData = event.data.slice(8);
+                        
+                        // Check frame sequence
+                        if (seqNum < lastDisplayedSeqNum) {
+                            outOfOrderFrames++;
+                            console.warn(`⚠️ Out-of-order: got seq ${seqNum}, expected >= ${lastDisplayedSeqNum}`);
+                            sendingFrame = false;
+                            sendFrames();
+                            return;
+                        }
+                        
+                        // Calculate response time
+                        const sendTime = frameSendTimes[seqNum];
+                        if (sendTime) {
+                            lastResponseTime = Date.now() - sendTime;
+                            delete frameSendTimes[seqNum];
+                            
+                            // Adaptive FPS: increase if response is fast, decrease if slow
+                            if (lastResponseTime < 80) {
+                                frameInterval = Math.max(50, frameInterval - 5); // Speed up (min 50ms = 20 FPS)
+                            } else if (lastResponseTime > 150) {
+                                frameInterval = Math.min(200, frameInterval + 10); // Slow down (max 200ms = 5 FPS)
+                            }
+                        }
+                        
+                        lastDisplayedSeqNum = seqNum;
+                        
+                        // Convert binary JPEG to image data URL
+                        const blob = new Blob([jpegData], { type: 'image/jpeg' });
+                        const url = URL.createObjectURL(blob);
+                        const img = new Image();
+                        img.src = url;
+                        img.onload = () => {
+                            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                            frameCountEl.textContent = seqNum;
+                            objectCountEl.textContent = objectCount;
+                            
+                            // Update detection status
+                            const detectionEl = document.getElementById('detectionStatus');
+                            const rttEl = document.getElementById('rttValue');
+                            detectionEl.textContent = objectCount > 0 ? `✅ ${objectCount} object(s)` : '⚪ No objects';
+                            detectionEl.style.color = objectCount > 0 ? '#4CAF50' : '#999';
+                            rttEl.textContent = lastResponseTime + 'ms';
+                            
+                            frame_count_div.textContent = `Seq: ${seqNum} | RTT: ${lastResponseTime}ms | Interval: ${frameInterval.toFixed(0)}ms`;
+                            
+                            // Show canvas with annotated frame, hide live video
+                            canvas.classList.remove('hidden');
+                            canvas.classList.add('visible');
+                            video.classList.add('hidden-video');
+                            
+                            URL.revokeObjectURL(url);
+                        };
+                        
+                        sendingFrame = false;
+                        sendFrames();
+                        return;
+                    }
+                    
+                    // Handle JSON messages (status, errors)
+                    const data = JSON.parse(event.data);
+                    if (data.status === 'ready') {
+                        console.log('✅ Tracker ready:', data.tracker);
+                        configReady = true;
+                        status.textContent = '✅ Connected! Streaming frames...';
+                        status.className = 'status success';
+                        if (isStreaming) {
+                            sendFrames();
+                        }
+                    } else if (data.error) {
+                        console.error('Server error:', data.error);
+                        status.textContent = `❌ Server error: ${data.error}`;
+                        status.className = 'status error';
+                        configReady = false;
+                        sendingFrame = false;
+                    }
+                } catch (e) {
+                    console.error('Failed to parse message:', e);
+                    sendingFrame = false;
+                }
+            };
+            
+            ws.onerror = (error) => {
+                console.error('❌ WebSocket error:', error);
+                status.textContent = `❌ WebSocket error: ${error.message || error}`;
+                status.className = 'status error';
+            };
+            
+            ws.onclose = (event) => {
+                console.log('WebSocket closed:', event.code, event.reason);
+                status.textContent = '⚠️ Connection closed';
+                status.className = 'status info';
+                isStreaming = false;
+            };
+        }
+
+        function sendFrames() {
+            if (!isStreaming || !configReady || sendingFrame) {
+                if (isStreaming && !sendingFrame) {
+                    console.log(`sendFrames rescheduled: isStreaming=${isStreaming}, configReady=${configReady}, sendingFrame=${sendingFrame}`);
+                    setTimeout(sendFrames, frameInterval);
+                }
+                return;
+            }
+            
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                console.warn('⚠️ WebSocket not ready. State:', ws?.readyState);
+                setTimeout(sendFrames, 100);
+                return;
+            }
+            
+            try {
+                console.log(`[SEND] Ready to capture frame ${nextFrameSeqNum}`);
+                sendingFrame = true;
+                const currentSeqNum = nextFrameSeqNum++;
+                
+                // Capture frame from video
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                console.log(`[SEND] Frame ${currentSeqNum}: Canvas captured`);
+                
+                // Encode to JPEG and send
+                canvas.toBlob((blob) => {
+                    if (!blob) {
+                        console.error('Failed to create blob from canvas');
+                        sendingFrame = false;
+                        setTimeout(sendFrames, frameInterval);
+                        return;
+                    }
+                    
+                    console.log(`[SEND] Frame ${currentSeqNum}: Blob created (${blob.size} bytes)`);
+                    
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        const reader = new FileReader();
+                        reader.onload = () => {
+                            try {
+                                // Create binary message: [seq_num(4 bytes)] [frame_data]
+                                const seqBuffer = new Uint8Array(4);
+                                const view = new DataView(seqBuffer.buffer);
+                                view.setUint32(0, currentSeqNum, true); // Little-endian
+                                
+                                const frameBuffer = new Uint8Array(reader.result);
+                                const combined = new Uint8Array(seqBuffer.length + frameBuffer.length);
+                                combined.set(seqBuffer, 0);
+                                combined.set(frameBuffer, 4);
+                                
+                                console.log(`[SEND] Frame ${currentSeqNum}: Sending ${combined.length} bytes (seq:4 + jpeg:${frameBuffer.length})`);
+                                
+                                // Record send time for RTT calculation
+                                frameSendTimes[currentSeqNum] = Date.now();
+                                ws.send(combined);
+                                console.log(`[SEND] Frame ${currentSeqNum}: Sent successfully`);
+                                
+                                // Reset flag and schedule next frame
+                                sendingFrame = false;
+                                if (isStreaming) {
+                                    setTimeout(sendFrames, frameInterval);
+                                }
+                            } catch (e) {
+                                console.error('Error sending frame:', e);
+                                sendingFrame = false;
+                                setTimeout(sendFrames, frameInterval);
+                            }
+                        };
+                        reader.readAsArrayBuffer(blob);
+                    } else {
+                        console.error(`WebSocket closed before sending frame ${currentSeqNum}`);
+                        sendingFrame = false;
+                    }
+                }, 'image/jpeg', 0.65); // Lower quality for speed
+                
+            } catch (e) {
+                console.error('Error in sendFrames:', e);
+                sendingFrame = false;
+                setTimeout(sendFrames, frameInterval);
+            }
+        }
+
+        function stopTracking() {
+            isStreaming = false;
+            sendingFrame = false;
+            
+            if (ws) {
+                ws.close();
+            }
+            
+            if (video.srcObject) {
+                video.srcObject.getTracks().forEach(track => track.stop());
+            }
+            
+            if (animationId) {
+                cancelAnimationFrame(animationId);
+            }
+            
+            // Reset display to video
+            canvas.classList.add('hidden');
+            canvas.classList.remove('visible');
+            video.classList.remove('hidden-video');
+            status.textContent = `⏹️ Tracking stopped | Dropped: ${droppedFrames} | Out-of-order: ${outOfOrderFrames}`;
+            status.className = 'status info';
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+            frameCountEl.textContent = '0';
+            objectCountEl.textContent = '0';
+        }
+
+        // Handle page unload
+        window.addEventListener('beforeunload', stopTracking);
+    </script>
+</body>
+</html>

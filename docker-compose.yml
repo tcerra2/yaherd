@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  yolo-tracking:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./:/app
+      - /tmp/yolo_tracking_uploads:/tmp/yolo_tracking_uploads
+    restart: unless-stopped
