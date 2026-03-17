@@ -276,11 +276,11 @@
             constructor() {
                 this.objects = new Map();
                 this.nextId = 0;
-                this.maxDistance = 100; // Maximum distance to consider same object
+                this.maxDistance = 50; // Maximum distance to consider same object
             }
             
             update(detections) {
-                // Calculate centroids from bbox [x, y, width, height]
+                // COCO-SSD bbox format: [x, y, width, height]
                 const currentCentroids = detections.map(det => ({
                     x: det.bbox[0] + det.bbox[2] / 2,
                     y: det.bbox[1] + det.bbox[3] / 2,
@@ -396,14 +396,12 @@
             const startTime = performance.now();
             
             try {
-                // Run object detection using COCO-SSD
+                // Run object detection using COCO-SSD detect() method
                 const predictions = await model.detect(video);
-                
-                // Filter predictions by confidence (optional)
-                const validPredictions = predictions.filter(p => p.score > 0.5);
+                const filteredPredictions = predictions.filter(p => p.score > 0.5);
                 
                 // Track objects
-                const tracked = tracker.update(validPredictions);
+                const tracked = tracker.update(filteredPredictions);
                 
                 // Draw on canvas
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -419,15 +417,14 @@
                     ctx.lineWidth = 2;
                     ctx.strokeRect(x, y, width, height);
                     
-                    // Draw ID and class label
+                    // Draw ID and class
                     ctx.fillStyle = '#00FF00';
                     ctx.font = 'bold 16px Arial';
-                    ctx.fillText(`ID: ${track.id}`, x, y - 5);
+                    ctx.fillText(`ID: ${track.id} - ${det.class}`, x, y - 5);
                     
-                    // Draw class and confidence
-                    ctx.fillStyle = '#00FF00';
+                    // Draw confidence
                     ctx.font = '14px Arial';
-                    ctx.fillText(`${det.class} - ${Math.round(det.score * 100)}%`, x, y + height + 20);
+                    ctx.fillText(`${Math.round(det.score * 100)}%`, x, y + height + 20);
                 });
                 
                 // Update stats
@@ -443,12 +440,11 @@
                 }
                 
                 document.getElementById('fps').textContent = fps;
-                document.getElementById('detections').textContent = validPredictions.length;
-                document.getElementById('tracked').textContent = tracker.objects.size;
+                document.getElementById('detections').textContent = filteredPredictions.length;
+                document.getElementById('tracked').textContent = tracked.length;
                 document.getElementById('processTime').textContent = processTime.toFixed(1) + 'ms';
             } catch (err) {
                 console.error('Tracking error:', err);
-                updateStatus('error', '❌ Tracking error. Check console.');
             }
             
             requestAnimationFrame(processFrame);
