@@ -154,6 +154,15 @@
             object-fit: contain;
         }
         
+        #remoteCanvas.visible {
+            z-index: 10;
+            display: block;
+        }
+        
+        #localVideo.hidden-video {
+            display: none;
+        }
+        
         .status {
             text-align: center;
             padding: 15px;
@@ -446,7 +455,12 @@
                             rttEl.textContent = lastResponseTime + 'ms';
                             
                             frame_count_div.textContent = `Seq: ${seqNum} | RTT: ${lastResponseTime}ms | Interval: ${frameInterval.toFixed(0)}ms`;
+                            
+                            // Show canvas with annotated frame, hide live video
                             canvas.classList.remove('hidden');
+                            canvas.classList.add('visible');
+                            video.classList.add('hidden-video');
+                            
                             URL.revokeObjectURL(url);
                         };
                         
@@ -589,7 +603,10 @@
                 cancelAnimationFrame(animationId);
             }
             
+            // Reset display to video
             canvas.classList.add('hidden');
+            canvas.classList.remove('visible');
+            video.classList.remove('hidden-video');
             status.textContent = `⏹️ Tracking stopped | Dropped: ${droppedFrames} | Out-of-order: ${outOfOrderFrames}`;
             status.className = 'status info';
             startBtn.disabled = false;
