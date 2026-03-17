@@ -176,8 +176,8 @@ def process_frame_with_tracking(frame, tracker, yolo, config: TrackingConfig, fr
         confs = result.boxes.conf.cpu().numpy()
         classes = result.boxes.cls.cpu().numpy().astype(int)
         
-        if frame_num % 100 == 0:
-            print(f"[YOLO] Frame {frame_num}: Detected {len(dets)} objects")
+        # Log EVERY detection for debugging (not just every 100 frames)
+        print(f"[YOLO] Frame {frame_num}: Detected {len(dets)} objects, conf_threshold={config.confidence}", flush=True)
     
     except Exception as e:
         if frame_num % 50 == 0:
@@ -201,15 +201,15 @@ def process_frame_with_tracking(frame, tracker, yolo, config: TrackingConfig, fr
                 classes.reshape(-1, 1)
             ], axis=1)
             tracks = tracker.update(dets_confs, frame)
+            print(f"[TRACKER] Frame {frame_num}: Input {len(dets)} dets → Output {len(tracks)} tracks", flush=True)
         else:
             tracks = np.array([])
-        
-        if frame_num % 100 == 0:
-            print(f"[TRACKER] Frame {frame_num}: Tracking {len(tracks)} objects")
+            print(f"[TRACKER] Frame {frame_num}: No detections, empty tracks", flush=True)
     
     except Exception as e:
-        if frame_num % 50 == 0:
-            print(f"[PROCESS] Frame {frame_num}: ERROR in tracker update: {e}")
+        print(f"[PROCESS] Frame {frame_num}: ERROR in tracker update: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
         tracks = np.array([])
     
     # Draw results
@@ -224,10 +224,14 @@ def process_frame_with_tracking(frame, tracker, yolo, config: TrackingConfig, fr
                 label = f"ID: {int(track_id)}"
                 cv2.putText(annotated_frame, label, (x1, y1 - 10),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+            print(f"[DRAW] Frame {frame_num}: Drew {len(tracks)} boxes on frame", flush=True)
+        else:
+            print(f"[DRAW] Frame {frame_num}: No tracks to draw", flush=True)
     
     except Exception as e:
-        if frame_num % 50 == 0:
-            print(f"[PROCESS] Frame {frame_num}: ERROR drawing boxes: {e}")
+        print(f"[PROCESS] Frame {frame_num}: ERROR drawing boxes: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
         annotated_frame = frame.copy()
     
     # Prepare response data
@@ -596,9 +600,9 @@ async def websocket_track(websocket: WebSocket):
                     annotated_frame, tracks_data = process_frame_with_tracking(frame, tracker, yolo, config, frame_count)
                     process_time = time.time() - process_start
                     frame_num += 1
-                    print(f"[WS] Frame {seq_num}: Processed in {process_time*1000:.1f}ms, {len(tracks_data)} tracks")
+                    print(f"[WS] Frame {seq_num}: Processing complete - {len(tracks_data)} tracks found, took {process_time*1000:.1f}ms", flush=True)
                 except Exception as e:
-                    print(f"[WS] Frame {seq_num}: ERROR processing frame - {e}")
+                    print(f"[WS] Frame {seq_num}: ERROR processing frame - {e}", flush=True)
                     import traceback
                     traceback.print_exc()
                     continue
@@ -613,9 +617,9 @@ async def websocket_track(websocket: WebSocket):
                         print(f"[WS] Frame {seq_num}: ERROR - JPEG encode failed!")
                         continue
                     
-                    print(f"[WS] Frame {seq_num}: Encoded in {encode_time*1000:.1f}ms, {len(frame_buffer.tobytes())} bytes")
+                    print(f"[WS] Frame {seq_num}: Encoded to JPEG in {encode_time*1000:.1f}ms, size={len(frame_buffer.tobytes())} bytes", flush=True)
                 except Exception as e:
-                    print(f"[WS] Frame {seq_num}: ERROR encoding JPEG - {e}")
+                    print(f"[WS] Frame {seq_num}: ERROR encoding JPEG - {e}", flush=True)
                     continue
                 
                 # Send response as binary: [seq_num(4)] [object_count(4)] [jpeg_data]
@@ -626,11 +630,12 @@ async def websocket_track(websocket: WebSocket):
                     response.extend(len(tracks_data).to_bytes(4, byteorder='little', signed=False))
                     response.extend(frame_buffer.tobytes())
                     
+                    print(f"[WS] Frame {seq_num}: Sending response with object_count={len(tracks_data)}, total_bytes={len(response)}", flush=True)
                     await websocket.send_bytes(bytes(response))
                     send_time = time.time() - send_start
-                    print(f"[WS] Frame {seq_num}: Response sent! {len(response)} bytes in {send_time*1000:.1f}ms")
+                    print(f"[WS] Frame {seq_num}: Response sent! {len(response)} bytes in {send_time*1000:.1f}ms", flush=True)
                 except Exception as e:
-                    print(f"[WS] Frame {seq_num}: ERROR sending response - {e}")
+                    print(f"[WS] Frame {seq_num}: ERROR sending response - {e}", flush=True)
                     import traceback
                     traceback.print_exc()
                     raise
