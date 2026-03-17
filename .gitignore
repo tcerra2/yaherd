@@ -34,9 +34,6 @@ val_utils/
 *.onnx
 *.engine
 
-# interactive plots
-*.html
-
 # tf models
 *saved_model/
 tf_models/

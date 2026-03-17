@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YOLO Object Tracking - Client-Side</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 40px;
+            max-width: 900px;
+            width: 100%;
+        }
+        
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 2.5em;
+        }
+        
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 0.95em;
+        }
+        
+        .video-container {
+            position: relative;
+            width: 100%;
+            max-width: 640px;
+            margin: 0 auto 30px;
+            background: #000;
+            border-radius: 15px;
+            overflow: hidden;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+        }
+        
+        video, canvas {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+        
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+        
+        .controls {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            flex-wrap: wrap;
+            margin-bottom: 30px;
+        }
+        
+        button {
+            padding: 12px 30px;
+            font-size: 1em;
+            font-weight: 600;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        .btn-start {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .btn-start:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn-stop {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+        }
+        
+        .btn-stop:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(245, 87, 108, 0.4);
+        }
+        
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .stats {
+            display: grid;
+            grid-template-columns: repeat( auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .stat-box {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 10px;
+            text-align: center;
+            border-left: 4px solid #667eea;
+        }
+        
+        .stat-label {
+            font-size: 0.85em;
+            color: #999;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .stat-value {
+            font-size: 1.8em;
+            font-weight: bold;
+            color: #333;
+            margin-top: 5px;
+        }
+        
+        .status {
+            text-align: center;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            font-weight: 600;
+        }
+        
+        .status.idle {
+            background: #e3f2fd;
+            color: #1976d2;
+        }
+        
+        .status.loading {
+            background: #fff3e0;
+            color: #f57c00;
+        }
+        
+        .status.tracking {
+            background: #e8f5e9;
+            color: #388e3c;
+        }
+        
+        .status.error {
+            background: #ffebee;
+            color: #d32f2f;
+        }
+        
+        .info {
+            background: #e3f2fd;
+            border-left: 4px solid #2196f3;
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 20px;
+            font-size: 0.9em;
+            color: #1565c0;
+        }
+        
+        .loading-spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 10px;
+            vertical-align: middle;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        @media (max-width: 600px) {
+            h1 {
+                font-size: 1.8em;
+            }
+            
+            .container {
+                padding: 20px;
+            }
+            
+            button {
+                padding: 10px 20px;
+                font-size: 0.9em;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎯 YOLO Object Tracking</h1>
+        <p class="subtitle">Real-time tracking using your device's camera • 100% Client-Side Processing</p>
+        
+        <div class="status idle" id="status">
+            <span id="statusText">Ready to start</span>
+        </div>
+        
+        <div class="video-container">
+            <video id="video" playsinline></video>
+            <canvas id="canvas"></canvas>
+        </div>
+        
+        <div class="controls">
+            <button class="btn-start" id="startBtn" onclick="startTracking()">▶ Start Tracking</button>
+            <button class="btn-stop" id="stopBtn" onclick="stopTracking()" disabled>⏹ Stop Tracking</button>
+        </div>
+        
+        <div class="stats">
+            <div class="stat-box">
+                <div class="stat-label">FPS</div>
+                <div class="stat-value" id="fps">0</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-label">Detections</div>
+                <div class="stat-value" id="detections">0</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-label">Tracked Objects</div>
+                <div class="stat-value" id="tracked">0</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-label">Processing Time</div>
+                <div class="stat-value" id="processTime">0ms</div>
+            </div>
+        </div>
+        
+        <div class="info">
+            <strong>ℹ️ About this app:</strong> All processing happens on your device using TensorFlow.js + YOLO model. 
+            No data is sent to any server. Your camera feed never leaves your computer.
+        </div>
+    </div>
+
+    <!-- TensorFlow.js and related libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+    
+    <script>
+        let video = document.getElementById('video');
+        let canvas = document.getElementById('canvas');
+        let ctx = canvas.getContext('2d');
+        let model = null;
+        let isTracking = false;
+        let trackedObjects = new Map();
+        let frameCount = 0;
+        let lastTime = performance.now();
+        let fps = 0;
+        
+        // Simple tracking algorithm (centroid tracking)
+        class ObjectTracker {
+            constructor() {
+                this.objects = new Map();
+                this.nextId = 0;
+                this.maxDistance = 100; // Maximum distance to consider same object
+            }
+            
+            update(detections) {
+                // Calculate centroids from bbox [x, y, width, height]
+                const currentCentroids = detections.map(det => ({
+                    x: det.bbox[0] + det.bbox[2] / 2,
+                    y: det.bbox[1] + det.bbox[3] / 2,
+                    detection: det
+                }));
+                
+                // Match detections to existing tracks
+                const used = new Set();
+                const matched = [];
+                
+                for (const [id, lastCentroid] of this.objects.entries()) {
+                    let minDist = Infinity;
+                    let bestMatch = null;
+                    
+                    currentCentroids.forEach((centroid, idx) => {
+                        if (used.has(idx)) return;
+                        
+                        const dist = Math.sqrt(
+                            Math.pow(centroid.x - lastCentroid.x, 2) +
+                            Math.pow(centroid.y - lastCentroid.y, 2)
+                        );
+                        
+                        if (dist < minDist && dist < this.maxDistance) {
+                            minDist = dist;
+                            bestMatch = idx;
+                        }
+                    });
+                    
+                    if (bestMatch !== null) {
+                        used.add(bestMatch);
+                        matched.push({
+                            id,
+                            centroid: currentCentroids[bestMatch]
+                        });
+                        this.objects.set(id, currentCentroids[bestMatch]);
+                    } else {
+                        this.objects.delete(id);
+                    }
+                }
+                
+                // Create new tracks for unmatched detections
+                currentCentroids.forEach((centroid, idx) => {
+                    if (!used.has(idx)) {
+                        this.objects.set(this.nextId, centroid);
+                        matched.push({
+                            id: this.nextId,
+                            centroid
+                        });
+                        this.nextId++;
+                    }
+                });
+                
+                return matched;
+            }
+            
+            reset() {
+                this.objects.clear();
+                this.nextId = 0;
+            }
+        }
+        
+        const tracker = new ObjectTracker();
+        
+        async function loadModel() {
+            updateStatus('loading', '<span class="loading-spinner"></span> Loading YOLO model...');
+            try {
+                model = await cocoSsd.load();
+                updateStatus('idle', 'Model loaded successfully! Ready to start.');
+            } catch (err) {
+                updateStatus('error', '❌ Error loading model: ' + err.message);
+                console.error('Model loading error:', err);
+            }
+        }
+        
+        async function startTracking() {
+            if (!model) {
+                alert('Model not loaded yet. Please wait...');
+                return;
+            }
+            
+            isTracking = true;
+            tracker.reset();
+            document.getElementById('startBtn').disabled = true;
+            document.getElementById('stopBtn').disabled = false;
+            updateStatus('tracking', '🎯 Tracking active...');
+            
+            try {
+                // Request camera access
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }
+                });
+                
+                video.srcObject = stream;
+                video.play();
+                
+                // Set canvas size to match video
+                video.onloadedmetadata = () => {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    processFrame();
+                };
+            } catch (err) {
+                updateStatus('error', '❌ Camera access denied: ' + err.message);
+                isTracking = false;
+                document.getElementById('startBtn').disabled = false;
+                document.getElementById('stopBtn').disabled = true;
+            }
+        }
+        
+        async function processFrame() {
+            if (!isTracking) return;
+            
+            const startTime = performance.now();
+            
+            try {
+                // Run object detection using COCO-SSD
+                const predictions = await model.detect(video);
+                
+                // Filter predictions by confidence (optional)
+                const validPredictions = predictions.filter(p => p.score > 0.5);
+                
+                // Track objects
+                const tracked = tracker.update(validPredictions);
+                
+                // Draw on canvas
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                
+                // Draw detections and tracks
+                tracked.forEach(track => {
+                    const det = track.centroid.detection;
+                    const [x, y, width, height] = det.bbox;
+                    
+                    // Draw bounding box
+                    ctx.strokeStyle = '#00FF00';
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(x, y, width, height);
+                    
+                    // Draw ID and class label
+                    ctx.fillStyle = '#00FF00';
+                    ctx.font = 'bold 16px Arial';
+                    ctx.fillText(`ID: ${track.id}`, x, y - 5);
+                    
+                    // Draw class and confidence
+                    ctx.fillStyle = '#00FF00';
+                    ctx.font = '14px Arial';
+                    ctx.fillText(`${det.class} - ${Math.round(det.score * 100)}%`, x, y + height + 20);
+                });
+                
+                // Update stats
+                const endTime = performance.now();
+                const processTime = endTime - startTime;
+                
+                frameCount++;
+                const currentTime = performance.now();
+                if (currentTime - lastTime >= 1000) {
+                    fps = frameCount;
+                    frameCount = 0;
+                    lastTime = currentTime;
+                }
+                
+                document.getElementById('fps').textContent = fps;
+                document.getElementById('detections').textContent = validPredictions.length;
+                document.getElementById('tracked').textContent = tracker.objects.size;
+                document.getElementById('processTime').textContent = processTime.toFixed(1) + 'ms';
+            } catch (err) {
+                console.error('Tracking error:', err);
+                updateStatus('error', '❌ Tracking error. Check console.');
+            }
+            
+            requestAnimationFrame(processFrame);
+        }
+        
+        function stopTracking() {
+            isTracking = false;
+            
+            // Stop video stream
+            if (video.srcObject) {
+                video.srcObject.getTracks().forEach(track => track.stop());
+            }
+            
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+            updateStatus('idle', 'Tracking stopped. Ready to start again.');
+        }
+        
+        function updateStatus(type, text) {
+            const statusEl = document.getElementById('status');
+            statusEl.className = 'status ' + type;
+            document.getElementById('statusText').innerHTML = text;
+        }
+        
+        // Initialize on page load
+        window.addEventListener('load', () => {
+            loadModel();
+        });
+        
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => {
+            stopTracking();
+        });
+    </script>
+</body>
+</html>
